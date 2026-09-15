@@ -3,6 +3,10 @@ import { Project, QualityGateResult } from '../types.ts';
 const SAFE_MIN = 8;
 const SAFE_MAX = 92;
 
+function isLocalAssetSource(source: string): boolean {
+  return source.startsWith('/outputs/') || source.startsWith('data:image/');
+}
+
 export function runQualityGate(project: Project, ffmpegAvailable: boolean): QualityGateResult {
   const messages: string[] = [];
   const scriptValid = project.script.trim().length >= 30;
@@ -13,12 +17,22 @@ export function runQualityGate(project: Project, ffmpegAvailable: boolean): Qual
   if (!allShotsHaveAssets) messages.push('Every shot must contain at least one visual asset.');
 
   const unresolvedAssets = shots.flatMap((shot) =>
-    shot.assets.filter((asset) => asset.type === 'image' && (!asset.source || asset.status !== 'ready'))
+    shot.assets
+      .filter((asset) => asset.type === 'image' && (!asset.source || asset.status !== 'ready'))
       .map((asset) => `${shot.shot_id}/${asset.id}`)
   );
-  const assetsResolved = unresolvedAssets.length === 0 && allShotsHaveAssets;
-  if (!assetsResolved) {
+  const remoteAssets = shots.flatMap((shot) =>
+    shot.assets
+      .filter((asset) => asset.type === 'image' && asset.source && !isLocalAssetSource(asset.source))
+      .map((asset) => `${shot.shot_id}/${asset.id}`)
+  );
+
+  const assetsResolved = unresolvedAssets.length === 0 && remoteAssets.length === 0 && allShotsHaveAssets;
+  if (unresolvedAssets.length > 0) {
     messages.push(`Visual assets are not ready: ${unresolvedAssets.slice(0, 5).join(', ')}${unresolvedAssets.length > 5 ? '…' : ''}`);
+  }
+  if (remoteAssets.length > 0) {
+    messages.push(`External image URLs are blocked for final render: ${remoteAssets.slice(0, 5).join(', ')}${remoteAssets.length > 5 ? '…' : ''}. Generate or upload local assets first.`);
   }
 
   const textWithinSafeArea = shots.every((shot) =>
@@ -43,7 +57,7 @@ export function runQualityGate(project: Project, ffmpegAvailable: boolean): Qual
   if (!timelineContinuous) messages.push('Shot timeline has gaps, overlaps, or does not match project duration.');
 
   const voiceValid = !project.voiceover || Boolean(project.voiceUrl);
-  if (!voiceValid) messages.push('Voiceover is enabled but no voice file is attached yet; V0.1 will render visuals only.');
+  if (!voiceValid) messages.push('Voiceover is enabled but no voice file is attached yet; final render should remain blocked until audio is implemented.');
 
   const readyToRender = scriptValid && assetsResolved && textWithinSafeArea && timelineContinuous && ffmpegAvailable;
   if (!ffmpegAvailable) messages.push('FFmpeg is not available.');
