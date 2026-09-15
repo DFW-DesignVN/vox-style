@@ -20,9 +20,11 @@ export function runQualityGate(project: Project, ffmpegAvailable: boolean): Qual
   for(const shot of shots){const start=Number(shot.start.toFixed(3)),end=Number(shot.end.toFixed(3)),duration=Number(shot.duration.toFixed(3));if(start<0||end<=start||Math.abs(end-start-duration)>0.12)timelineContinuous=false;if(Math.abs(start-cursor)>0.12)timelineContinuous=false;cursor=end;}
   if(Math.abs(cursor-project.duration)>0.2)timelineContinuous=false;
   if(!timelineContinuous)messages.push('Shot timeline has gaps, overlaps, or does not match project duration.');
-  const voiceValid=!project.voiceover||Boolean(project.voiceUrl&&project.voiceDuration&&project.audioTimeline?.beats?.length);
-  if(!voiceValid)messages.push('Voiceover is enabled but the generated voice track and audio-first beat timeline are missing.');
-  const readyToRender=scriptValid&&assetsResolved&&textWithinSafeArea&&timelineContinuous&&voiceValid&&ffmpegAvailable;
-  if(!ffmpegAvailable)messages.push('FFmpeg is not available.');
-  return{scriptValid,voiceValid,allShotsHaveAssets:assetsResolved,textWithinSafeArea,timelineContinuous,ffmpegAvailable,readyToRender,messages};
+  const voiceValid = Boolean(project.voiceUrl && project.voiceDuration);
+  if (!voiceValid && project.voiceover) {
+    messages.push('Notice: Voice track not generated yet. Final MP4 will be silent until Voice & Beats are generated.');
+  }
+  const readyToRender = scriptValid && assetsResolved && textWithinSafeArea && timelineContinuous && ffmpegAvailable;
+  if (!ffmpegAvailable) messages.push('FFmpeg is not available.');
+  return { scriptValid, voiceValid, allShotsHaveAssets: assetsResolved, textWithinSafeArea, timelineContinuous, ffmpegAvailable, readyToRender, messages };
 }

@@ -86,9 +86,22 @@ async function generateElevenLabs(text: string, opts: TTSOptions): Promise<TTSRe
   return { success:true, url:`/outputs/audio/${id}.mp3`, filePath, duration, provider:'elevenlabs', voiceId, modelId };
 }
 
+async function isCapCutAvailable(): Promise<boolean> {
+  const python = process.env.CAPCUT_PYTHON || 'python3';
+  const script = path.join(process.cwd(), 'server', 'tts', 'capcut_bridge.py');
+  if (!fs.existsSync(script)) return false;
+  try {
+    const { stdout } = await execAsync(`"${python}" -c "import capcut_tts_api"`, { timeout: 2000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function getTTSProviders() {
   const vieneu = await isVieNeuAvailable();
-  return { vieneu, capcut: Boolean(process.env.CAPCUT_PYTHON || process.env.CAPCUT_TTS_ENABLED === '1'), elevenlabs: Boolean(process.env.ELEVENLABS_API_KEY) };
+  const capcut = await isCapCutAvailable();
+  return { vieneu, capcut, elevenlabs: Boolean(process.env.ELEVENLABS_API_KEY) };
 }
 
 export async function generateVoice(text: string, opts: TTSOptions = {}) {
@@ -96,11 +109,16 @@ export async function generateVoice(text: string, opts: TTSOptions = {}) {
   if (!clean) throw new Error('Voice text is empty');
   const requested = opts.provider || (process.env.TTS_PROVIDER as TTSProviderName) || 'auto';
   if (requested === 'vieneu') return generateVieNeu(clean, opts);
-  if (requested === 'capcut') return generateCapCut(clean, opts);
+  if (requested === 'capcut') {
+    if (!await isCapCutAvailable()) {
+      throw new Error('CapCut TTS requires Python module "capcut_tts_api". Please run "pip install -e /path/to/capcut-tts-api" or choose another provider.');
+    }
+    return generateCapCut(clean, opts);
+  }
   if (requested === 'elevenlabs') return generateElevenLabs(clean, opts);
   const failures: string[] = [];
   if (await isVieNeuAvailable()) { try { return await generateVieNeu(clean, opts); } catch (e:any) { failures.push(`vieneu: ${e.message}`); } }
-  if (process.env.CAPCUT_PYTHON || process.env.CAPCUT_TTS_ENABLED === '1') { try { return await generateCapCut(clean, opts); } catch (e:any) { failures.push(`capcut: ${e.message}`); } }
+  if (await isCapCutAvailable()) { try { return await generateCapCut(clean, opts); } catch (e:any) { failures.push(`capcut: ${e.message}`); } }
   if (process.env.ELEVENLABS_API_KEY) { try { return await generateElevenLabs(clean, opts); } catch (e:any) { failures.push(`elevenlabs: ${e.message}`); } }
   throw new Error(`No TTS provider succeeded. ${failures.join(' | ')}`);
 }

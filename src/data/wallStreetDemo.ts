@@ -18,6 +18,8 @@ export const WALL_STREET_DEMO_PROJECT: Project = {
   resolution: '1920x1080',
   style: 'vox_paper_collage',
   voiceover: true,
+  voiceUrl: '/outputs/audio/wall_street_demo.mp3',
+  voiceDuration: 24.8,
   subtitles: true,
   sfx: true,
   createdAt: new Date().toISOString(),

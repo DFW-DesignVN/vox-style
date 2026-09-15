@@ -77,7 +77,7 @@ export const RenderModal: React.FC<RenderModalProps> = ({
       setProgress(68);
       setStatusMessage(`Transmitting ${frameList.length} frames to FFmpeg backend engine...`);
 
-      // 3. Send to Server FFmpeg
+      // 3. Send to Server FFmpeg with frames and voice audio track
       const response = await fetch('/api/render-final-video', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -85,6 +85,7 @@ export const RenderModal: React.FC<RenderModalProps> = ({
           projectId: project.project_id,
           shotFrames: frameList,
           fps,
+          voiceUrl: project.voiceUrl,
         }),
       });
 
@@ -95,7 +96,11 @@ export const RenderModal: React.FC<RenderModalProps> = ({
 
       const resData = await response.json();
       setProgress(100);
-      setStatusMessage('Rendering finished! 1080p MP4 ready.');
+      setStatusMessage(
+        resData.hasAudio
+          ? 'Rendering finished! 1080p MP4 ready with AAC narration audio track.'
+          : 'Rendering finished! 1080p MP4 ready (silent video).'
+      );
       setVideoUrl(resData.videoUrl);
     } catch (err: any) {
       console.error('Render failed:', err);
@@ -111,7 +116,13 @@ export const RenderModal: React.FC<RenderModalProps> = ({
     { label: 'All Shots Have Assets', passed: qualityGate.allShotsHaveAssets, blocking: true },
     { label: 'Text Within Safe Area (8–92%)', passed: qualityGate.textWithinSafeArea, blocking: true },
     { label: 'FFmpeg Video Engine', passed: qualityGate.ffmpegAvailable, blocking: true },
-    { label: 'Voice File (Warning only in V0.1)', passed: qualityGate.voiceValid, blocking: false },
+    {
+      label: project.voiceUrl
+        ? 'Voice Narration Track (Muxed via FFmpeg AAC)'
+        : 'Voice Track (Optional: Silent render if not generated)',
+      passed: qualityGate.voiceValid,
+      blocking: false,
+    },
   ];
 
   return (

@@ -64,7 +64,74 @@ app.post('/api/voice/generate',async(req,res)=>{try{const{text,projectId,voiceId
 app.post('/api/timeline/audio-first',async(req,res)=>{try{const{project,voiceDuration}=req.body;if(!project?.shots?.length)return res.status(400).json({error:'project.shots is required'});let duration=Number(voiceDuration);if(!Number.isFinite(duration)||duration<=0)duration=Number(project.voiceDuration);if(!Number.isFinite(duration)||duration<=0)return res.status(400).json({error:'voiceDuration is required'});const normalized=await normalizeProjectToVoiceTimeline(project,duration);const timeline={duration:Number(duration.toFixed(3)),fps:project.fps||30,voiceUrl:project.voiceUrl,beats:normalized.beats,generatedAt:new Date().toISOString()};res.json({success:true,project:{...project,duration:Number(duration.toFixed(3)),shots:normalized.shots,voiceDuration:Number(duration.toFixed(3)),audioTimeline:timeline},timeline});}catch(err:any){res.status(500).json({error:err.message});}});
 app.post('/api/voice-and-timeline',async(req,res)=>{try{const{project,text}=req.body;if(!project?.shots?.length)return res.status(400).json({error:'project.shots is required'});const voiceText=text||project.script||project.shots.map((s:any)=>s.narration).join(' ');const voice=await generateVoice(voiceText,req.body);const normalized=await normalizeProjectToVoiceTimeline(project,voice.duration);const timeline={duration:Number(voice.duration.toFixed(3)),fps:project.fps||30,voiceUrl:voice.url,beats:normalized.beats,generatedAt:new Date().toISOString()};res.json({success:true,voice,project:{...project,duration:Number(voice.duration.toFixed(3)),voiceUrl:voice.url,voiceDuration:Number(voice.duration.toFixed(3)),shots:normalized.shots,audioTimeline:timeline},timeline});}catch(err:any){res.status(500).json({error:err.message});}});
 
-app.post('/api/render-final-video',async(req,res)=>{try{const{projectId,shotFrames,fps=30}=req.body;if(!Array.isArray(shotFrames)||!shotFrames.length)return res.status(400).json({error:'No frames provided for rendering'});const renderId=`${projectId||'vox_render'}_${Date.now()}`;const projectDir=path.join(TEMP_DIR,renderId);fs.mkdirSync(projectDir,{recursive:true});for(let i=0;i<shotFrames.length;i++)fs.writeFileSync(path.join(projectDir,`frame_${String(i).padStart(5,'0')}.jpg`),Buffer.from(String(shotFrames[i]).replace(/^data:image\/\w+;base64,/,'').replace(/\s/g,''),'base64'));const outputMp4Path=path.join(OUTPUTS_DIR,`${renderId}.mp4`);await execAsync(`ffmpeg -y -framerate ${Number(fps)||30} -i "${projectDir}/frame_%05d.jpg" -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,format=yuv420p" -c:v libx264 -pix_fmt yuv420p -r ${Number(fps)||30} -preset fast -crf 20 "${outputMp4Path}"`);fs.rmSync(projectDir,{recursive:true,force:true});res.json({success:true,videoUrl:`/outputs/${renderId}.mp4`,renderId,frameCount:shotFrames.length,fps:Number(fps)||30});}catch(err:any){res.status(500).json({error:err.message});}});
+app.post('/api/render-final-video', async (req, res) => {
+  try {
+    const { projectId, shotFrames, fps = 30, voiceUrl } = req.body;
+    if (!Array.isArray(shotFrames) || !shotFrames.length) {
+      return res.status(400).json({ error: 'No frames provided for rendering' });
+    }
+    const renderId = `${projectId || 'vox_render'}_${Date.now()}`;
+    const projectDir = path.join(TEMP_DIR, renderId);
+    fs.mkdirSync(projectDir, { recursive: true });
+
+    for (let i = 0; i < shotFrames.length; i++) {
+      fs.writeFileSync(
+        path.join(projectDir, `frame_${String(i).padStart(5, '0')}.jpg`),
+        Buffer.from(String(shotFrames[i]).replace(/^data:image\/\w+;base64,/, '').replace(/\s/g, ''), 'base64')
+      );
+    }
+
+    const outputMp4Path = path.join(OUTPUTS_DIR, `${renderId}.mp4`);
+
+    // Handle voice narration audio track if available
+    let audioInputArg = '';
+    let audioCodecArg = '';
+    let hasAudio = false;
+
+    if (voiceUrl && typeof voiceUrl === 'string') {
+      let resolvedAudioPath: string | null = null;
+      if (voiceUrl.startsWith('data:audio/')) {
+        const ext = voiceUrl.includes('audio/wav') ? 'wav' : 'mp3';
+        const tempVoicePath = path.join(projectDir, `voice_track.${ext}`);
+        const base64Data = voiceUrl.replace(/^data:audio\/\w+;base64,/, '');
+        fs.writeFileSync(tempVoicePath, Buffer.from(base64Data, 'base64'));
+        resolvedAudioPath = tempVoicePath;
+      } else {
+        const cleanPath = voiceUrl.replace(/^\//, '');
+        const candidateInCwd = path.join(process.cwd(), cleanPath);
+        if (fs.existsSync(candidateInCwd)) {
+          resolvedAudioPath = candidateInCwd;
+        } else if (fs.existsSync(voiceUrl)) {
+          resolvedAudioPath = voiceUrl;
+        }
+      }
+
+      if (resolvedAudioPath) {
+        audioInputArg = `-i "${resolvedAudioPath}"`;
+        audioCodecArg = `-c:a aac -b:a 192k -af "apad" -shortest`;
+        hasAudio = true;
+      }
+    }
+
+    const ffmpegCmd = audioInputArg
+      ? `ffmpeg -y -framerate ${Number(fps) || 30} -i "${projectDir}/frame_%05d.jpg" ${audioInputArg} -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,format=yuv420p" -c:v libx264 -pix_fmt yuv420p -r ${Number(fps) || 30} ${audioCodecArg} -preset fast -crf 20 "${outputMp4Path}"`
+      : `ffmpeg -y -framerate ${Number(fps) || 30} -i "${projectDir}/frame_%05d.jpg" -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,format=yuv420p" -c:v libx264 -pix_fmt yuv420p -r ${Number(fps) || 30} -preset fast -crf 20 "${outputMp4Path}"`;
+
+    await execAsync(ffmpegCmd);
+    fs.rmSync(projectDir, { recursive: true, force: true });
+
+    res.json({
+      success: true,
+      videoUrl: `/outputs/${renderId}.mp4`,
+      renderId,
+      frameCount: shotFrames.length,
+      fps: Number(fps) || 30,
+      hasAudio,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 async function startServer(){if(process.env.NODE_ENV!=='production'){const vite=await createViteServer({server:{middlewareMode:true},appType:'spa'});app.use(vite.middlewares);}else{const distPath=path.join(process.cwd(),'dist');app.use(express.static(distPath));app.get('*',(_req,res)=>res.sendFile(path.join(distPath,'index.html')));}app.listen(PORT,'0.0.0.0',()=>console.log(`VOX Auto Video Engine server running on http://0.0.0.0:${PORT}`));}
 startServer();
