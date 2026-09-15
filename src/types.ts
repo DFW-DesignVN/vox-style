@@ -3,6 +3,7 @@ export type LayoutID =
 export type MotionID =
   | 'paper_drop' | 'paper_slide_left' | 'paper_slide_right' | 'paper_slide_up' | 'paper_slide_down' | 'photo_stack' | 'paper_reveal'
   | 'paper_flip' | 'paper_flip_vertical' | 'photo_flip' | 'card_flip'
+  | 'paper_curl' | 'paper_uncurl' | 'paper_tear' | 'tape_peel' | 'photo_swing' | 'photo_rotate' | 'stack_shuffle' | 'stamp_slam' | 'camera_push' | 'camera_pull' | 'jitter'
   | 'typewriter' | 'headline_pop' | 'stamp_in' | 'arrow_draw' | 'string_draw' | 'number_pop' | 'bar_grow' | 'diagram_draw' | 'annotation_reveal' | 'node_connect' | 'panel_slide' | 'slow_reveal' | 'crop_reveal' | 'ticker_slide';
 export type VisualDirectionMode = 'auto' | 'manual' | 'hybrid';
 export type PhysicalBorderID = 'scissor_cut' | 'clean_edge';
