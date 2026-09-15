@@ -83,7 +83,7 @@ app.post('/api/render-final-video', async (req, res) => {
 
     const outputMp4Path = path.join(OUTPUTS_DIR, `${renderId}.mp4`);
 
-    // Handle voice narration audio track if available
+    // Handle voice narration audio track with strict path security
     let audioInputArg = '';
     let audioCodecArg = '';
     let hasAudio = false;
@@ -97,12 +97,18 @@ app.post('/api/render-final-video', async (req, res) => {
         fs.writeFileSync(tempVoicePath, Buffer.from(base64Data, 'base64'));
         resolvedAudioPath = tempVoicePath;
       } else {
-        const cleanPath = voiceUrl.replace(/^\//, '');
-        const candidateInCwd = path.join(process.cwd(), cleanPath);
+        const cleanPath = voiceUrl.replace(/^\/+/, '');
+        const candidateInCwd = path.resolve(process.cwd(), cleanPath);
+        const allowedOutputs = path.resolve(process.cwd(), 'outputs');
+        const allowedPublic = path.resolve(process.cwd(), 'public');
+
+        // Security check: only allow files inside outputs/ or public/
+        if (!candidateInCwd.startsWith(allowedOutputs) && !candidateInCwd.startsWith(allowedPublic)) {
+          return res.status(400).json({ error: 'Security violation: voiceUrl must resolve within outputs/ or public/ directory' });
+        }
+
         if (fs.existsSync(candidateInCwd)) {
           resolvedAudioPath = candidateInCwd;
-        } else if (fs.existsSync(voiceUrl)) {
-          resolvedAudioPath = voiceUrl;
         }
       }
 
@@ -120,13 +126,36 @@ app.post('/api/render-final-video', async (req, res) => {
     await execAsync(ffmpegCmd);
     fs.rmSync(projectDir, { recursive: true, force: true });
 
+    // Rigorous FFprobe verification of output MP4
+    const probeCmd = `ffprobe -v error -show_entries stream=codec_name,codec_type -of json "${outputMp4Path}"`;
+    const { stdout: probeStdout } = await execAsync(probeCmd);
+    const probeData = JSON.parse(probeStdout || '{}');
+    const streams: Array<{ codec_name: string; codec_type: string }> = Array.isArray(probeData.streams)
+      ? probeData.streams
+      : [];
+
+    const videoStream = streams.find((s) => s.codec_type === 'video');
+    const audioStream = streams.find((s) => s.codec_type === 'audio');
+
+    if (!videoStream) {
+      throw new Error('FFprobe verification failed: Rendered MP4 does not contain a valid video stream.');
+    }
+
+    if (hasAudio && !audioStream) {
+      throw new Error('FFprobe verification failed: Audio track was specified but rendered MP4 contains no audio stream.');
+    }
+
     res.json({
       success: true,
       videoUrl: `/outputs/${renderId}.mp4`,
       renderId,
       frameCount: shotFrames.length,
       fps: Number(fps) || 30,
-      hasAudio,
+      hasAudio: Boolean(audioStream),
+      verifiedStreams: {
+        video: videoStream.codec_name,
+        audio: audioStream ? audioStream.codec_name : null,
+      },
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

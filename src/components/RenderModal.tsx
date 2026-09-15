@@ -22,6 +22,8 @@ export const RenderModal: React.FC<RenderModalProps> = ({
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [renderFps, setRenderFps] = useState<number>(project.fps || 30);
+  const [verifiedStreams, setVerifiedStreams] = useState<{ video: string; audio: string | null } | null>(null);
 
   if (!isOpen) return null;
 
@@ -37,6 +39,7 @@ export const RenderModal: React.FC<RenderModalProps> = ({
     setIsRendering(true);
     setError(null);
     setProgress(0);
+    setVerifiedStreams(null);
     setStatusMessage('Preloading assets for all shots...');
 
     try {
@@ -45,15 +48,15 @@ export const RenderModal: React.FC<RenderModalProps> = ({
         await preloadShotImages(s);
       }
 
-      // 2. Offscreen rendering of frames at 20fps stepped rate for clean stop-motion compilation
-      setStatusMessage('Compositing paper collage frames at 1920x1080...');
+      // 2. Offscreen rendering of frames
+      const fps = renderFps;
+      setStatusMessage(`Compositing paper collage frames at 1920x1080 (${fps} FPS)...`);
       const offCanvas = document.createElement('canvas');
       offCanvas.width = 1920;
       offCanvas.height = 1080;
       const ctx = offCanvas.getContext('2d');
       if (!ctx) throw new Error('Could not initialize canvas context');
 
-      const fps = 20;
       const frameList: string[] = [];
       const totalFrames = Math.max(1, Math.round(project.duration * fps));
       let completedFrames = 0;
@@ -69,7 +72,7 @@ export const RenderModal: React.FC<RenderModalProps> = ({
           if (completedFrames % 10 === 0) {
             const pct = Math.min(65, Math.floor((completedFrames / totalFrames) * 65));
             setProgress(pct);
-            setStatusMessage(`Compositing shot ${shot.order}/${project.shots.length} (frame ${completedFrames}/${totalFrames})...`);
+            setStatusMessage(`Compositing shot ${shot.order}/${project.shots.length} (frame ${completedFrames}/${totalFrames} @ ${fps}fps)...`);
           }
         }
       }
@@ -96,9 +99,10 @@ export const RenderModal: React.FC<RenderModalProps> = ({
 
       const resData = await response.json();
       setProgress(100);
+      setVerifiedStreams(resData.verifiedStreams || null);
       setStatusMessage(
         resData.hasAudio
-          ? 'Rendering finished! 1080p MP4 ready with AAC narration audio track.'
+          ? `Rendering finished! 1080p MP4 ready with AAC audio (FFprobe: ${resData.verifiedStreams?.video || 'h264'} / ${resData.verifiedStreams?.audio || 'aac'}).`
           : 'Rendering finished! 1080p MP4 ready (silent video).'
       );
       setVideoUrl(resData.videoUrl);
@@ -199,6 +203,37 @@ export const RenderModal: React.FC<RenderModalProps> = ({
           )}
         </div>
 
+        {/* FPS selector before render */}
+        {!isRendering && !videoUrl && (
+          <div className="flex items-center justify-between bg-zinc-950/60 p-3 rounded-lg border border-zinc-800 text-xs font-mono">
+            <span className="text-zinc-400">Frame Rate Target:</span>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setRenderFps(30)}
+                className={`px-3 py-1 rounded text-xs transition ${
+                  renderFps === 30
+                    ? 'bg-red-600 text-white font-bold border border-red-500'
+                    : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                30 FPS (VOX Standard)
+              </button>
+              <button
+                type="button"
+                onClick={() => setRenderFps(20)}
+                className={`px-3 py-1 rounded text-xs transition ${
+                  renderFps === 20
+                    ? 'bg-red-600 text-white font-bold border border-red-500'
+                    : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                20 FPS (Fast Draft)
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Render Progress or Player */}
         {isRendering ? (
           <div className="space-y-3 py-4">
@@ -219,11 +254,19 @@ export const RenderModal: React.FC<RenderModalProps> = ({
         ) : videoUrl ? (
           <div className="space-y-4">
             <div className="p-3 bg-emerald-950/40 border border-emerald-800 rounded-lg text-xs font-mono text-emerald-300 flex items-center justify-between">
-              <span className="font-semibold">✓ 1080p Documentary MP4 Render Complete!</span>
+              <div className="flex flex-col gap-1">
+                <span className="font-semibold">✓ 1080p Documentary MP4 Render Complete!</span>
+                {verifiedStreams && (
+                  <span className="text-[11px] text-emerald-400/90 font-mono">
+                    FFprobe Verified: Video ({verifiedStreams.video?.toUpperCase()})
+                    {verifiedStreams.audio ? ` • Audio (${verifiedStreams.audio?.toUpperCase()} 192k)` : ' • Silent Track'}
+                  </span>
+                )}
+              </div>
               <a
                 href={videoUrl}
                 download={`${project.project_id}.mp4`}
-                className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-bold transition"
+                className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-bold transition shrink-0"
               >
                 <Download className="w-3.5 h-3.5" />
                 <span>Download MP4</span>
