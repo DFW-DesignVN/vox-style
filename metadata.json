@@ -1,0 +1,6 @@
+{
+  "name": "VOX Auto Video Engine",
+  "description": "Documentary paper collage video engine generating synchronized 1080p editorial videos from topics with AI director, beat timing, physical paper motion, and FFmpeg rendering.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
