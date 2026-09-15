@@ -406,4 +406,22 @@ export const WALL_STREET_DEMO_PROJECT: Project = {
       ],
     },
   ],
+  audioTimeline: {
+    duration: 24.8,
+    fps: 30,
+    generatedAt: new Date().toISOString(),
+    beats: [
+      { id: 'beat_001', shotId: 'shot_001', start: 0.0, end: 1.6, duration: 1.6, text: 'October 24, 1929: The opening bell', words: ['October', '24,', '1929:', 'The', 'opening', 'bell'], wordStart: 0, wordEnd: 6, visualCue: 'Typewriter date pop and opening bell audio cue' },
+      { id: 'beat_002', shotId: 'shot_001', start: 1.6, end: 3.2, duration: 1.6, text: 'at the New York Stock Exchange', words: ['at', 'the', 'New', 'York', 'Stock', 'Exchange'], wordStart: 6, wordEnd: 12, visualCue: 'Newspaper headline pop and stock floor visual reveal' },
+      { id: 'beat_003', shotId: 'shot_001', start: 3.2, end: 4.8, duration: 1.6, text: 'triggered an unprecedented wave of panic.', words: ['triggered', 'an', 'unprecedented', 'wave', 'of', 'panic.'], wordStart: 12, wordEnd: 18, visualCue: 'Red downward panic trajectory and ticker drop' },
+      { id: 'beat_004', shotId: 'shot_002', start: 4.8, end: 7.3, duration: 2.5, text: 'Crowds swelled outside the exchange on Broad Street,', words: ['Crowds', 'swelled', 'outside', 'the', 'exchange', 'on', 'Broad', 'Street,'], wordStart: 18, wordEnd: 26, visualCue: 'Archival crowd photograph cutout drops onto desk' },
+      { id: 'beat_005', shotId: 'shot_002', start: 7.3, end: 9.8, duration: 2.5, text: 'watching fortunes vanish in minutes.', words: ['watching', 'fortunes', 'vanish', 'in', 'minutes.'], wordStart: 26, wordEnd: 31, visualCue: 'Yellow marker underline & ticker stamp' },
+      { id: 'beat_006', shotId: 'shot_003', start: 9.8, end: 12.3, duration: 2.5, text: 'In just hours, 12.9 million shares were dumped,', words: ['In', 'just', 'hours,', '12.9', 'million', 'shares', 'were', 'dumped,'], wordStart: 31, wordEnd: 39, visualCue: 'Giant 12.9M bold statistics stamp pop' },
+      { id: 'beat_007', shotId: 'shot_003', start: 12.3, end: 14.8, duration: 2.5, text: 'destroying margin loans across the country.', words: ['destroying', 'margin', 'loans', 'across', 'the', 'country.'], wordStart: 39, wordEnd: 45, visualCue: 'Red annotation arrow connects debt margin' },
+      { id: 'beat_008', shotId: 'shot_004', start: 14.8, end: 17.3, duration: 2.5, text: 'Banking titans gathered in secret at J.P. Morgan,', words: ['Banking', 'titans', 'gathered', 'in', 'secret', 'at', 'J.P.', 'Morgan,'], wordStart: 45, wordEnd: 53, visualCue: 'Photo stack reveals Wall Street banker portraits' },
+      { id: 'beat_009', shotId: 'shot_004', start: 17.3, end: 19.8, duration: 2.5, text: 'pooling emergency funds to halt the collapse.', words: ['pooling', 'emergency', 'funds', 'to', 'halt', 'the', 'collapse.'], wordStart: 53, wordEnd: 60, visualCue: 'Emergency financial bail-out red stamp in' },
+      { id: 'beat_010', shotId: 'shot_005', start: 19.8, end: 22.3, duration: 2.5, text: 'The temporary rally held for barely forty-eight hours,', words: ['The', 'temporary', 'rally', 'held', 'for', 'barely', 'forty-eight', 'hours,'], wordStart: 60, wordEnd: 68, visualCue: 'Timeline countdown bar activates' },
+      { id: 'beat_011', shotId: 'shot_005', start: 22.3, end: 24.8, duration: 2.5, text: 'before Black Tuesday unleashed the Great Depression.', words: ['before', 'Black', 'Tuesday', 'unleashed', 'the', 'Great', 'Depression.'], wordStart: 68, wordEnd: 75, visualCue: 'Final collage board montage and headline stamp' },
+    ],
+  },
 };

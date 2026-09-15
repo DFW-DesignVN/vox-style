@@ -7,7 +7,7 @@ import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
 import { generateAsset, processUploadedImage } from './server/assetEngine.ts';
-import { generateVoice, normalizeProjectToVoiceTimeline } from './server/audioEngine.ts';
+import { generateVoice, normalizeProjectToVoiceTimeline, getTTSProviders } from './server/audioEngine.ts';
 
 dotenv.config();
 const execAsync = promisify(exec);
@@ -24,6 +24,15 @@ app.use('/outputs', express.static(OUTPUTS_DIR));
 app.get('/api/health', async (_req, res) => {
   try { const { stdout } = await execAsync('ffmpeg -version'); const m = stdout.match(/ffmpeg version ([^\s]+)/); res.json({ status:'ok', ffmpeg:true, ffmpegVersion:m?.[1]||'detected', nodeEnv:process.env.NODE_ENV||'development', tts:!!process.env.ELEVENLABS_API_KEY }); }
   catch (err:any) { res.json({ status:'ok', ffmpeg:false, tts:!!process.env.ELEVENLABS_API_KEY, error:err.message }); }
+});
+
+app.get('/api/tts/providers', async (_req, res) => {
+  try {
+    const providers = await getTTSProviders();
+    res.json(providers);
+  } catch (err: any) {
+    res.json({ vieneu: false, capcut: false, elevenlabs: false });
+  }
 });
 
 app.get('/api/presets', (_req,res)=>res.json({ layouts:['hero_archive','newspaper','map','photo_stack','document','big_number','timeline','collage_board'], motions:['paper_drop','paper_slide_left','paper_slide_right','paper_slide_up','paper_slide_down','photo_stack','paper_reveal','typewriter','headline_pop','stamp_in','arrow_draw','string_draw'], style:{name:'vox_paper_collage',palette:{paper:'#E6DCB8',offWhite:'#F4EEDA',black:'#121212',gray:'#52525B',red:'#DC2626',yellow:'#CA8A04'}} }));

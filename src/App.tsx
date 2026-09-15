@@ -21,6 +21,9 @@ export default function App() {
   const [ffmpegAvailable, setFfmpegAvailable] = useState<boolean | null>(null);
   const [isRenderModalOpen, setIsRenderModalOpen] = useState<boolean>(false);
   const [isPresetDrawerOpen, setIsPresetDrawerOpen] = useState<boolean>(false);
+  const [ttsProvider, setTtsProvider] = useState<'auto' | 'vieneu' | 'capcut' | 'elevenlabs'>('auto');
+  const [isGeneratingVoice, setIsGeneratingVoice] = useState<boolean>(false);
+  const [voiceNotice, setVoiceNotice] = useState<string | null>(null);
 
   // Check FFmpeg status on startup
   useEffect(() => {
@@ -292,6 +295,40 @@ export default function App() {
     reader.readAsDataURL(file);
   };
 
+  // Handler: Generate Audio-First Voice & Beat Timeline
+  const handleGenerateVoiceAndTimeline = async () => {
+    if (!project || project.shots.length === 0) return;
+    setIsGeneratingVoice(true);
+    setVoiceNotice(null);
+    try {
+      const response = await fetch('/api/voice-and-timeline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project,
+          provider: ttsProvider,
+        }),
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Failed to synthesize voice and beat timeline');
+      }
+
+      const data = await response.json();
+      if (data.success && data.project) {
+        setProject(data.project);
+        setDuration(data.project.duration);
+        setVoiceNotice(`Audio-first timeline synced successfully (${data.project.audioTimeline?.beats?.length || 0} beats).`);
+      }
+    } catch (err: any) {
+      console.warn('Audio-first voice generation notice:', err.message);
+      setVoiceNotice(`TTS notice: ${err.message}. To run locally, ensure VieNeu or CapCut is running, or set ELEVENLABS_API_KEY.`);
+    } finally {
+      setIsGeneratingVoice(false);
+    }
+  };
+
   // Pending assets count calculation
   const pendingAssetsCount = project.shots.reduce((acc, shot) => {
     const hero = shot.assets.find((a) => a.role === 'hero') || shot.assets[0];
@@ -324,7 +361,26 @@ export default function App() {
               onGenerateAllAssets={handleGenerateAllAssets}
               isGeneratingAssets={isGeneratingAssets}
               pendingAssetsCount={pendingAssetsCount}
+              ttsProvider={ttsProvider}
+              setTtsProvider={setTtsProvider}
+              onGenerateVoiceAndTimeline={handleGenerateVoiceAndTimeline}
+              isGeneratingVoice={isGeneratingVoice}
+              voiceUrl={project.voiceUrl}
+              voiceDuration={project.voiceDuration}
+              totalBeats={project.audioTimeline?.beats?.length || 0}
             />
+
+            {voiceNotice && (
+              <div className="bg-zinc-950 border border-amber-900/60 text-amber-300 text-xs font-mono p-3 rounded-xl flex items-start justify-between gap-2 shadow-sm">
+                <span>{voiceNotice}</span>
+                <button
+                  onClick={() => setVoiceNotice(null)}
+                  className="text-zinc-500 hover:text-zinc-300 font-bold ml-2"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
 
             {/* Pipeline Status Card */}
             <div className="bg-zinc-900/90 border border-zinc-800 rounded-xl p-4 flex flex-col gap-3">
