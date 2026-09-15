@@ -7,6 +7,7 @@ import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
 import { generateAsset, processUploadedImage } from './server/assetEngine.ts';
+import { generateVoice, normalizeProjectToVoiceTimeline } from './server/audioEngine.ts';
 
 dotenv.config();
 const execAsync = promisify(exec);
@@ -21,131 +22,40 @@ app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 app.use('/outputs', express.static(OUTPUTS_DIR));
 
 app.get('/api/health', async (_req, res) => {
-  try {
-    const { stdout } = await execAsync('ffmpeg -version');
-    const m = stdout.match(/ffmpeg version ([^\s]+)/);
-    res.json({ status: 'ok', ffmpeg: true, ffmpegVersion: m?.[1] || 'detected', nodeEnv: process.env.NODE_ENV || 'development' });
-  } catch (err: any) { res.json({ status: 'ok', ffmpeg: false, error: err.message }); }
+  try { const { stdout } = await execAsync('ffmpeg -version'); const m = stdout.match(/ffmpeg version ([^\s]+)/); res.json({ status:'ok', ffmpeg:true, ffmpegVersion:m?.[1]||'detected', nodeEnv:process.env.NODE_ENV||'development', tts:!!process.env.ELEVENLABS_API_KEY }); }
+  catch (err:any) { res.json({ status:'ok', ffmpeg:false, tts:!!process.env.ELEVENLABS_API_KEY, error:err.message }); }
 });
 
-app.get('/api/presets', (_req, res) => res.json({
-  layouts: ['hero_archive','newspaper','map','photo_stack','document','big_number','timeline','collage_board'],
-  motions: ['paper_drop','paper_slide_left','paper_slide_right','paper_slide_up','paper_slide_down','photo_stack','paper_reveal','typewriter','headline_pop','stamp_in','arrow_draw','string_draw'],
-  style: { name: 'vox_paper_collage', palette: { paper:'#E6DCB8', offWhite:'#F4EEDA', black:'#121212', gray:'#52525B', red:'#DC2626', yellow:'#CA8A04' } },
-}));
+app.get('/api/presets', (_req,res)=>res.json({ layouts:['hero_archive','newspaper','map','photo_stack','document','big_number','timeline','collage_board'], motions:['paper_drop','paper_slide_left','paper_slide_right','paper_slide_up','paper_slide_down','photo_stack','paper_reveal','typewriter','headline_pop','stamp_in','arrow_draw','string_draw'], style:{name:'vox_paper_collage',palette:{paper:'#E6DCB8',offWhite:'#F4EEDA',black:'#121212',gray:'#52525B',red:'#DC2626',yellow:'#CA8A04'}} }));
 
-app.post('/api/director/storyboard', async (req, res) => {
+app.post('/api/director/storyboard', async (req,res)=>{
   try {
-    const { topic, duration = 25, niche = 'documentary' } = req.body;
-    if (!topic) return res.status(400).json({ error: 'Topic is required' });
-    const shotCount = duration <= 20 ? 4 : duration <= 25 ? 5 : 6;
-    if (process.env.GEMINI_API_KEY) {
-      try {
-        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-        const systemPrompt = `You are the AI Director for VOX AUTO VIDEO ENGINE V0.1. Produce strict JSON only. Topic is ${topic}; niche is ${niche}. Create exactly ${shotCount} shots totaling about ${duration}s. Use only layouts hero_archive,newspaper,map,photo_stack,document,big_number,timeline,collage_board. Use only motions paper_drop,paper_slide_left,paper_slide_right,paper_slide_up,paper_slide_down,photo_stack,paper_reveal,typewriter,headline_pop,stamp_in,arrow_draw,string_draw. Max 2 text elements per shot. IMPORTANT: never output external image URLs, Unsplash URLs, remote sources, or placeholder source URLs. Every image asset MUST have an assetPrompt specific to the topic and shot; set source to an empty string and status to pending. Return JSON matching {project_id,title,duration,script,shots:[{shot_id,order,start,end,duration,narration,visual_idea,layout,background,assets:[{id,type,role,source,position,scale,rotation,motion,start,filter,paperCutout,shadow,assetPrompt,provider,status}],text,graphics]}.`;
-        const response = await ai.models.generateContent({ model: 'gemini-3.8-flash', contents: `Topic: ${topic}. Duration: ${duration}s.`, config: { systemInstruction: systemPrompt, responseMimeType: 'application/json' } });
-        const parsed = JSON.parse(response.text || '{}');
-        sanitizeStoryboardAssets(parsed);
-        return res.json(parsed);
-      } catch (e: any) { console.warn('Gemini director fallback:', e.message); }
-    }
-    return res.json(generateStructuredFallback(topic, duration, shotCount));
-  } catch (err: any) { res.status(500).json({ error: err.message }); }
+    const { topic, duration=25, niche='documentary' } = req.body;
+    if (!topic) return res.status(400).json({error:'Topic is required'});
+    const shotCount = duration<=20?4:duration<=25?5:6;
+    if (process.env.GEMINI_API_KEY) try {
+      const ai=new GoogleGenAI({apiKey:process.env.GEMINI_API_KEY});
+      const systemPrompt=`You are the AI Director for VOX AUTO VIDEO ENGINE V0.1. Produce strict JSON only. Topic is ${topic}; niche is ${niche}. Create exactly ${shotCount} shots totaling about ${duration}s. Use only layouts hero_archive,newspaper,map,photo_stack,document,big_number,timeline,collage_board. Use only motions paper_drop,paper_slide_left,paper_slide_right,paper_slide_up,paper_slide_down,photo_stack,paper_reveal,typewriter,headline_pop,stamp_in,arrow_draw,string_draw. Max 2 text elements per shot. IMPORTANT: never output external image URLs, Unsplash URLs, remote sources, or placeholder source URLs. Every image asset MUST have an assetPrompt specific to the topic and shot; set source to an empty string and status to pending. Return JSON matching {project_id,title,duration,script,shots:[{shot_id,order,start,end,duration,narration,visual_idea,layout,background,assets:[{id,type,role,source,position,scale,rotation,motion,start,filter,paperCutout,shadow,assetPrompt,provider,status}],text,graphics]}.`;
+      const response=await ai.models.generateContent({model:'gemini-3.8-flash',contents:`Topic: ${topic}. Duration: ${duration}s.`,config:{systemInstruction:systemPrompt,responseMimeType:'application/json'}});
+      const parsed=JSON.parse(response.text||'{}'); sanitizeStoryboardAssets(parsed); return res.json(parsed);
+    } catch(e:any){ console.warn('Gemini director fallback:',e.message); }
+    return res.json(generateStructuredFallback(topic,duration,shotCount));
+  } catch(err:any){res.status(500).json({error:err.message});}
 });
 
-function sanitizeStoryboardAssets(project: any) {
-  for (const shot of project?.shots || []) for (const asset of shot.assets || []) {
-    if (asset.type === 'image') {
-      asset.source = '';
-      asset.status = asset.status === 'ready' && typeof asset.source === 'string' && asset.source.startsWith('/outputs/') ? 'ready' : 'pending';
-      asset.provider = asset.provider || 'gemini';
-      asset.paperCutout = true;
-    }
-  }
-}
+function sanitizeStoryboardAssets(project:any){for(const shot of project?.shots||[])for(const asset of shot.assets||[])if(asset.type==='image'){asset.source='';asset.status='pending';asset.provider=asset.provider||'gemini';asset.paperCutout=true;}}
+function generateStructuredFallback(topic:string,totalDuration:number,count:number){const shotDuration=Number((totalDuration/count).toFixed(1));const layouts=['newspaper','hero_archive','big_number','document','collage_board'];const shots:any[]=[];let currentTime=0;for(let i=0;i<count;i++){const start=currentTime;const end=Number((currentTime+shotDuration).toFixed(1));currentTime=end;shots.push({shot_id:`shot_00${i+1}`,order:i+1,start,end,duration:shotDuration,narration:`Act ${i+1}: Key historical beat regarding ${topic}, unfolding the critical context and impact.`,visual_idea:`Visual documentation of ${topic} using archival paper cutout and editorial annotations.`,layout:layouts[i%layouts.length],background:{type:i%2===0?'newsprint':'archival'},assets:[{id:`hero_0${i+1}`,type:'image',role:'hero',source:'',position:{x:50,y:54},scale:.9,rotation:(i%2===0?-1:1)*2,motion:i===0?'paper_drop':i===1?'paper_slide_left':'photo_stack',start:.3,filter:'high_contrast',paperCutout:true,shadow:{enabled:true,offset:[12,16],blur:24,opacity:.45},assetPrompt:`Topic-specific archival documentary image depicting ${topic}, chapter ${i+1}. Hand-cut paper collage aesthetic, historically plausible, high contrast, no text.`,provider:'gemini',status:'pending'}],text:[{id:`txt_d_${i+1}`,content:`CHAPTER 0${i+1}`,role:'date',style:'typewriter',position:{x:18,y:20},motion:'typewriter',start:.5,fontSize:32,color:'#111111'},{id:`txt_h_${i+1}`,content:topic.toUpperCase().slice(0,24),role:'headline',style:'condensed_bold',position:{x:18,y:32},motion:'headline_pop',start:1.2,fontSize:64,color:'#F4EEDA'}],graphics:[{id:`tape_${i+1}`,type:'tape',color:'#E5D6A7',motion:'paper_drop',start:.4,position:{x:48,y:28},scale:1,rotation:-8},{id:`arrow_${i+1}`,type:'arrow',color:'#DC2626',motion:'arrow_draw',start:1.8,points:[[25,70],[46,52]]}]});}return{project_id:`vox_${Date.now()}`,title:topic,duration:totalDuration,script:shots.map(s=>s.narration).join(' '),shots};}
 
-function generateStructuredFallback(topic: string, totalDuration: number, count: number) {
-  const shotDuration = Number((totalDuration / count).toFixed(1));
-  const layouts = ['newspaper','hero_archive','big_number','document','collage_board'];
-  const shots: any[] = [];
-  let currentTime = 0;
-  for (let i = 0; i < count; i++) {
-    const start = currentTime;
-    const end = Number((currentTime + shotDuration).toFixed(1));
-    currentTime = end;
-    shots.push({
-      shot_id:`shot_00${i+1}`, order:i+1, start, end, duration:shotDuration,
-      narration:`Act ${i+1}: Key historical beat regarding ${topic}, unfolding the critical context and impact.`,
-      visual_idea:`Visual documentation of ${topic} using archival paper cutout and editorial annotations.`,
-      layout:layouts[i % layouts.length], background:{ type:i%2===0?'newsprint':'archival' },
-      assets:[{ id:`hero_0${i+1}`, type:'image', role:'hero', source:'', position:{x:50,y:54}, scale:.9, rotation:(i%2===0?-1:1)*2, motion:i===0?'paper_drop':i===1?'paper_slide_left':'photo_stack', start:.3, filter:'high_contrast', paperCutout:true, shadow:{enabled:true,offset:[12,16],blur:24,opacity:.45}, assetPrompt:`Topic-specific archival documentary image depicting ${topic}, chapter ${i+1}. Hand-cut paper collage aesthetic, historically plausible, high contrast, no text.`, provider:'gemini', status:'pending'}],
-      text:[{id:`txt_d_${i+1}`,content:`CHAPTER 0${i+1}`,role:'date',style:'typewriter',position:{x:18,y:20},motion:'typewriter',start:.5,fontSize:32,color:'#111111'},{id:`txt_h_${i+1}`,content:topic.toUpperCase().slice(0,24),role:'headline',style:'condensed_bold',position:{x:18,y:32},motion:'headline_pop',start:1.2,fontSize:64,color:'#F4EEDA'}],
-      graphics:[{id:`tape_${i+1}`,type:'tape',color:'#E5D6A7',motion:'paper_drop',start:.4,position:{x:48,y:28},scale:1,rotation:-8},{id:`arrow_${i+1}`,type:'arrow',color:'#DC2626',motion:'arrow_draw',start:1.8,points:[[25,70],[46,52]]}],
-    });
-  }
-  return { project_id:`vox_${Date.now()}`, title:topic, duration:totalDuration, script:shots.map(s=>s.narration).join(' '), shots };
-}
+app.post('/api/assets/generate',async(req,res)=>{try{const{prompt,topic,shotId,assetId,role,layout,style}=req.body;if(!prompt)return res.status(400).json({error:'Asset prompt is required'});res.json(await generateAsset({prompt,topic,shotId,assetId,role,layout,style}));}catch(err:any){res.status(500).json({error:err.message});}});
+app.post('/api/assets/generate-all',async(req,res)=>{try{const{project,concurrency=2}=req.body;if(!project?.shots||!Array.isArray(project.shots))return res.status(400).json({error:'Project with shots is required'});const updatedProject=JSON.parse(JSON.stringify(project));const jobs:any[]=[];for(const shot of updatedProject.shots)for(const asset of shot.assets||[])if(asset.type==='image')jobs.push({shot,asset});let generatedCount=0,cursor=0;async function worker(){while(true){const index=cursor++;if(index>=jobs.length)return;const{shot,asset}=jobs[index];asset.status='generating';try{const result=await generateAsset({prompt:asset.assetPrompt||`Archival documentary image depicting ${project.title}, shot ${shot.order}`,topic:project.title,shotId:shot.shot_id,assetId:asset.id,role:asset.role,layout:shot.layout});if(result.success&&result.url){asset.source=result.url;asset.provider=result.provider;asset.status='ready';asset.paperCutout=true;generatedCount++;}else asset.status='failed';}catch{asset.status='failed';}}}await Promise.all(Array.from({length:Math.min(Math.max(1,Number(concurrency)||2),3)},worker));res.json({success:true,project:updatedProject,generatedCount,totalAssets:jobs.length});}catch(err:any){res.status(500).json({error:err.message});}});
+app.post('/api/assets/upload',async(req,res)=>{try{const{imageBase64,shotId,assetId}=req.body;if(!imageBase64)return res.status(400).json({error:'imageBase64 is required'});res.json(await processUploadedImage(imageBase64,shotId,assetId));}catch(err:any){res.status(500).json({error:err.message});}});
 
-app.post('/api/assets/generate', async (req, res) => {
-  try {
-    const { prompt, topic, shotId, assetId, role, layout, style } = req.body;
-    if (!prompt) return res.status(400).json({ error:'Asset prompt is required' });
-    res.json(await generateAsset({ prompt, topic, shotId, assetId, role, layout, style }));
-  } catch (err:any) { res.status(500).json({ error:err.message }); }
-});
+// Audio-first production: generate one authoritative voice track, then derive shot timing and 5-8 word visual beats from it.
+app.post('/api/voice/generate',async(req,res)=>{try{const{text,projectId,voiceId,modelId,stability,similarityBoost}=req.body;if(!text)return res.status(400).json({error:'text is required'});const result=await generateVoice(text,{voiceId,modelId,stability,similarityBoost});res.json(result);}catch(err:any){res.status(500).json({error:err.message});}});
+app.post('/api/timeline/audio-first',async(req,res)=>{try{const{project,voiceDuration}=req.body;if(!project?.shots?.length)return res.status(400).json({error:'project.shots is required'});let duration=Number(voiceDuration);if(!Number.isFinite(duration)||duration<=0)duration=Number(project.voiceDuration);if(!Number.isFinite(duration)||duration<=0)return res.status(400).json({error:'voiceDuration is required'});const normalized=await normalizeProjectToVoiceTimeline(project,duration);const timeline={duration:Number(duration.toFixed(3)),fps:project.fps||30,voiceUrl:project.voiceUrl,beats:normalized.beats,generatedAt:new Date().toISOString()};res.json({success:true,project:{...project,duration:Number(duration.toFixed(3)),shots:normalized.shots,voiceDuration:Number(duration.toFixed(3)),audioTimeline:timeline},timeline});}catch(err:any){res.status(500).json({error:err.message});}});
+app.post('/api/voice-and-timeline',async(req,res)=>{try{const{project,text}=req.body;if(!project?.shots?.length)return res.status(400).json({error:'project.shots is required'});const voiceText=text||project.script||project.shots.map((s:any)=>s.narration).join(' ');const voice=await generateVoice(voiceText,req.body);const normalized=await normalizeProjectToVoiceTimeline(project,voice.duration);const timeline={duration:Number(voice.duration.toFixed(3)),fps:project.fps||30,voiceUrl:voice.url,beats:normalized.beats,generatedAt:new Date().toISOString()};res.json({success:true,voice,project:{...project,duration:Number(voice.duration.toFixed(3)),voiceUrl:voice.url,voiceDuration:Number(voice.duration.toFixed(3)),shots:normalized.shots,audioTimeline:timeline},timeline});}catch(err:any){res.status(500).json({error:err.message});}});
 
-app.post('/api/assets/generate-all', async (req, res) => {
-  try {
-    const { project, concurrency = 2 } = req.body;
-    if (!project?.shots || !Array.isArray(project.shots)) return res.status(400).json({ error:'Project with shots is required' });
-    const updatedProject = JSON.parse(JSON.stringify(project));
-    const jobs: any[] = [];
-    for (const shot of updatedProject.shots) for (const asset of shot.assets || []) if (asset.type === 'image') jobs.push({ shot, asset });
-    let generatedCount = 0;
-    let cursor = 0;
-    async function worker() {
-      while (true) {
-        const index = cursor++;
-        if (index >= jobs.length) return;
-        const { shot, asset } = jobs[index];
-        asset.status = 'generating';
-        try {
-          const result = await generateAsset({ prompt: asset.assetPrompt || `Archival documentary image depicting ${project.title}, shot ${shot.order}`, topic: project.title, shotId: shot.shot_id, assetId: asset.id, role: asset.role, layout: shot.layout });
-          if (result.success && result.url) { asset.source=result.url; asset.provider=result.provider; asset.status='ready'; asset.paperCutout=true; generatedCount++; }
-          else asset.status='failed';
-        } catch { asset.status='failed'; }
-      }
-    }
-    await Promise.all(Array.from({ length: Math.min(Math.max(1, Number(concurrency)||2), 3) }, worker));
-    res.json({ success:true, project:updatedProject, generatedCount, totalAssets:jobs.length });
-  } catch (err:any) { res.status(500).json({ error:err.message }); }
-});
+app.post('/api/render-final-video',async(req,res)=>{try{const{projectId,shotFrames,fps=30}=req.body;if(!Array.isArray(shotFrames)||!shotFrames.length)return res.status(400).json({error:'No frames provided for rendering'});const renderId=`${projectId||'vox_render'}_${Date.now()}`;const projectDir=path.join(TEMP_DIR,renderId);fs.mkdirSync(projectDir,{recursive:true});for(let i=0;i<shotFrames.length;i++)fs.writeFileSync(path.join(projectDir,`frame_${String(i).padStart(5,'0')}.jpg`),Buffer.from(String(shotFrames[i]).replace(/^data:image\/\w+;base64,/,'').replace(/\s/g,''),'base64'));const outputMp4Path=path.join(OUTPUTS_DIR,`${renderId}.mp4`);await execAsync(`ffmpeg -y -framerate ${Number(fps)||30} -i "${projectDir}/frame_%05d.jpg" -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,format=yuv420p" -c:v libx264 -pix_fmt yuv420p -r ${Number(fps)||30} -preset fast -crf 20 "${outputMp4Path}"`);fs.rmSync(projectDir,{recursive:true,force:true});res.json({success:true,videoUrl:`/outputs/${renderId}.mp4`,renderId,frameCount:shotFrames.length,fps:Number(fps)||30});}catch(err:any){res.status(500).json({error:err.message});}});
 
-app.post('/api/assets/upload', async (req, res) => {
-  try {
-    const { imageBase64, shotId, assetId } = req.body;
-    if (!imageBase64) return res.status(400).json({ error:'imageBase64 is required' });
-    res.json(await processUploadedImage(imageBase64, shotId, assetId));
-  } catch (err:any) { res.status(500).json({ error:err.message }); }
-});
-
-app.post('/api/render-final-video', async (req, res) => {
-  try {
-    const { projectId, shotFrames, fps=30 } = req.body;
-    if (!Array.isArray(shotFrames) || !shotFrames.length) return res.status(400).json({ error:'No frames provided for rendering' });
-    const renderId=`${projectId||'vox_render'}_${Date.now()}`;
-    const projectDir=path.join(TEMP_DIR,renderId); fs.mkdirSync(projectDir,{recursive:true});
-    for(let i=0;i<shotFrames.length;i++) fs.writeFileSync(path.join(projectDir,`frame_${String(i).padStart(5,'0')}.jpg`),Buffer.from(String(shotFrames[i]).replace(/^data:image\/\w+;base64,/,'').replace(/\s/g,''),'base64'));
-    const outputMp4Path=path.join(OUTPUTS_DIR,`${renderId}.mp4`);
-    await execAsync(`ffmpeg -y -framerate ${Number(fps)||30} -i "${projectDir}/frame_%05d.jpg" -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,format=yuv420p" -c:v libx264 -pix_fmt yuv420p -r ${Number(fps)||30} -preset fast -crf 20 "${outputMp4Path}"`);
-    fs.rmSync(projectDir,{recursive:true,force:true});
-    res.json({success:true,videoUrl:`/outputs/${renderId}.mp4`,renderId,frameCount:shotFrames.length,fps:Number(fps)||30});
-  } catch(err:any){ res.status(500).json({error:err.message}); }
-});
-
-async function startServer() {
-  if (process.env.NODE_ENV !== 'production') { const vite=await createViteServer({server:{middlewareMode:true},appType:'spa'}); app.use(vite.middlewares); }
-  else { const distPath=path.join(process.cwd(),'dist'); app.use(express.static(distPath)); app.get('*',(_req,res)=>res.sendFile(path.join(distPath,'index.html'))); }
-  app.listen(PORT,'0.0.0.0',()=>console.log(`VOX Auto Video Engine server running on http://0.0.0.0:${PORT}`));
-}
+async function startServer(){if(process.env.NODE_ENV!=='production'){const vite=await createViteServer({server:{middlewareMode:true},appType:'spa'});app.use(vite.middlewares);}else{const distPath=path.join(process.cwd(),'dist');app.use(express.static(distPath));app.get('*',(_req,res)=>res.sendFile(path.join(distPath,'index.html')));}app.listen(PORT,'0.0.0.0',()=>console.log(`VOX Auto Video Engine server running on http://0.0.0.0:${PORT}`));}
 startServer();
