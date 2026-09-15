@@ -7,6 +7,8 @@ coverage/
 .env*
 !.env.example
 outputs/*
-!outputs/audio/
-!outputs/audio/wall_street_demo.mp3
 temp_renders/
+
+# Generated audio is runtime data; keep only the intentional demo fixture.
+outputs/audio/*
+!outputs/audio/wall_street_demo.mp3
