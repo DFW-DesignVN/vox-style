@@ -34,6 +34,7 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
   const [showSafeArea, setShowSafeArea] = useState<boolean>(false);
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<'shot' | 'timeline' | 'contact_sheet'>('shot');
+  const [previewQuality, setPreviewQuality] = useState<'draft' | 'full'>('draft');
   const [currentTime, setCurrentTime] = useState<number>(0); // Seconds within current shot or project
   const animationFrameRef = useRef<number | null>(null);
   const lastTimestampRef = useRef<number | null>(null);
@@ -96,13 +97,21 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    const renderW = previewQuality === 'draft' ? 960 : 1920;
+    const renderH = previewQuality === 'draft' ? 540 : 1080;
+
+    if (canvas.width !== renderW || canvas.height !== renderH) {
+      canvas.width = renderW;
+      canvas.height = renderH;
+    }
+
     if (viewMode === 'contact_sheet') {
       renderContactSheet(ctx, project);
       return;
     }
 
     if (viewMode === 'shot') {
-      renderShotFrame(ctx, activeShot, currentTime, 1920, 1080);
+      renderShotFrame(ctx, activeShot, currentTime, renderW, renderH);
     } else {
       // Timeline continuous mode
       let accumulated = 0;
@@ -122,7 +131,7 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
         shotTime = targetShot.duration;
       }
 
-      renderShotFrame(ctx, targetShot, shotTime, 1920, 1080);
+      renderShotFrame(ctx, targetShot, shotTime, renderW, renderH);
     }
 
     // Draw Title Safe Area Guide (90% margins) if enabled
@@ -132,13 +141,13 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
       ctx.lineWidth = 2;
       ctx.setLineDash([8, 6]);
       // 90% safe action
-      ctx.strokeRect(1920 * 0.05, 1080 * 0.05, 1920 * 0.9, 1080 * 0.9);
+      ctx.strokeRect(renderW * 0.05, renderH * 0.05, renderW * 0.9, renderH * 0.9);
       // 80% safe title
       ctx.strokeStyle = 'rgba(234, 179, 8, 0.4)';
-      ctx.strokeRect(1920 * 0.1, 1080 * 0.1, 1920 * 0.8, 1080 * 0.8);
+      ctx.strokeRect(renderW * 0.1, renderH * 0.1, renderW * 0.8, renderH * 0.8);
       ctx.restore();
     }
-  }, [activeShot, currentTime, project, showSafeArea, viewMode]);
+  }, [activeShot, currentTime, previewQuality, project, showSafeArea, viewMode]);
 
   // Frame tick
   useEffect(() => {
@@ -356,6 +365,32 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
               {isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
             </button>
           )}
+
+          {/* Preview Resolution Quality Selector */}
+          <div className="flex items-center gap-1 bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800">
+            <button
+              onClick={() => setPreviewQuality('draft')}
+              className={`px-2 py-0.5 rounded text-[10px] font-mono transition ${
+                previewQuality === 'draft'
+                  ? 'bg-amber-400 text-zinc-950 font-bold'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+              title="Draft Mode (960x540): Ultra smooth playback, 0% CPU lag"
+            >
+              Draft 540p
+            </button>
+            <button
+              onClick={() => setPreviewQuality('full')}
+              className={`px-2 py-0.5 rounded text-[10px] font-mono transition ${
+                previewQuality === 'full'
+                  ? 'bg-amber-400 text-zinc-950 font-bold'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+              title="Full Mode (1920x1080): Crisp master inspection"
+            >
+              Full 1080p
+            </button>
+          </div>
 
           <button
             onClick={() => setShowSafeArea((prev) => !prev)}

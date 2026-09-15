@@ -3,12 +3,37 @@
  * for the VOX Documentary Video Engine.
  */
 
-// Draw an aged archival paper background with subtle fiber noise, vignette, and fold lines
+// Offscreen cache for paper backgrounds to prevent thousands of draw calls per frame
+const backgroundCache = new Map<string, HTMLCanvasElement>();
+
 export function drawAgedPaperBackground(
   ctx: CanvasRenderingContext2D,
   width: number,
   height: number,
   type: 'newsprint' | 'archival' | 'map' | 'corkboard' | 'cream_aged' = 'newsprint'
+) {
+  const cacheKey = `${type}_${width}_${height}`;
+  let cachedCanvas = backgroundCache.get(cacheKey);
+
+  if (!cachedCanvas) {
+    cachedCanvas = document.createElement('canvas');
+    cachedCanvas.width = width;
+    cachedCanvas.height = height;
+    const bCtx = cachedCanvas.getContext('2d');
+    if (bCtx) {
+      renderProceduralPaper(bCtx, width, height, type);
+    }
+    backgroundCache.set(cacheKey, cachedCanvas);
+  }
+
+  ctx.drawImage(cachedCanvas, 0, 0);
+}
+
+function renderProceduralPaper(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  type: 'newsprint' | 'archival' | 'map' | 'corkboard' | 'cream_aged'
 ) {
   ctx.save();
 
