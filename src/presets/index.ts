@@ -1,8 +1,7 @@
 import { PresetLayout, PresetMotion, VisualStyleConfig } from '../types.ts';
 import { VOX_50_VISUAL_STYLES, VOX_STYLE_CATEGORIES } from './visualStyles.ts';
-
 export { VOX_50_VISUAL_STYLES, VOX_STYLE_CATEGORIES };
-export const VOX_STYLE_PRESET: VisualStyleConfig = { name:'vox_paper_collage', palette:{ paper:'#E6DCB8',offWhite:'#F4EEDA',black:'#121212',gray:'#52525B',red:'#DC2626',yellow:'#CA8A04' }, texture:{paper:true,grain:true,halftone:true}, shadows:{enabled:true,color:'rgba(24, 20, 15, 0.45)',defaultBlur:14}, camera:{default:'locked'} };
+export const VOX_STYLE_PRESET: VisualStyleConfig = { name:'vox_paper_collage', palette:{ paper:'#E6DCB8',offWhite:'#F4EEDA',black:'#121212',gray:'#52525B',red:'#DC2626',yellow:'#CA8A04' }, texture:{paper:true,grain:true,halftone:true}, shadows:{enabled:true,color:'rgba(24, 20, 15, 0.45)',defaultBlur:14},camera:{default:'locked'} };
 export const VOX_LAYOUTS: PresetLayout[] = [
  {id:'hero_archive',name:'Ảnh lưu trữ chủ đạo',description:'Nền + ảnh lưu trữ lớn + ngày tháng + mũi tên đỏ',defaultLayers:['background','hero_photo','date_label','red_arrow']},
  {id:'newspaper',name:'Trang nhất báo chí',description:'Newsprint + headline + ảnh nhỏ + marker',defaultLayers:['newsprint_bg','hero_headline','small_photo','marker_highlight']},
@@ -26,6 +25,17 @@ export const VOX_MOTIONS: PresetMotion[] = [
  {id:'paper_flip_vertical',name:'Lật giấy dọc',category:'paper',description:'Lật theo trục dọc'},
  {id:'photo_flip',name:'Lật ảnh',category:'paper',description:'Ảnh in lật mặt trước/sau'},
  {id:'card_flip',name:'Lật thẻ hồ sơ',category:'paper',description:'Evidence card lật ngang'},
+ {id:'paper_curl',name:'Cuộn mép giấy',category:'paper',description:'Mép giấy cong lên như vật liệu thật'},
+ {id:'paper_uncurl',name:'Duỗi phẳng giấy',category:'paper',description:'Nếp gấp mở và mặt giấy phẳng lại'},
+ {id:'paper_tear',name:'Xé giấy',category:'paper',description:'Mép giấy rách mở ra'},
+ {id:'tape_peel',name:'Bóc băng keo',category:'paper',description:'Băng keo bong khỏi mặt giấy'},
+ {id:'photo_swing',name:'Ảnh đung đưa',category:'paper',description:'Ảnh treo dây dao động nhẹ'},
+ {id:'photo_rotate',name:'Xoay ảnh',category:'paper',description:'Ảnh xoay vào vị trí'},
+ {id:'stack_shuffle',name:'Xáo trộn xấp ảnh',category:'paper',description:'Các lớp ảnh lệch và ổn định lại'},
+ {id:'stamp_slam',name:'Đóng dấu mạnh',category:'graphic',description:'Con dấu đập xuống và rung'},
+ {id:'camera_push',name:'Camera tiến',category:'paper',description:'Tiến nhẹ vào bố cục'},
+ {id:'camera_pull',name:'Camera lùi',category:'paper',description:'Lùi nhẹ để mở rộng bố cục'},
+ {id:'jitter',name:'Rung khung',category:'graphic',description:'Rung ngắn cho sự kiện/cảnh báo'},
  {id:'typewriter',name:'Gõ máy chữ',category:'text',description:'Hiện từng ký tự'},
  {id:'headline_pop',name:'Headline bật vào',category:'text',description:'Headline dán xuống với overshoot'},
  {id:'stamp_in',name:'Đóng dấu',category:'graphic',description:'Con dấu đập xuống'},
