@@ -108,7 +108,10 @@ export default function App() {
   const handleUpdateProjectScript = (newScript:string) => setProject((prev)=>({...prev,script:newScript}));
 
   const handleGenerateShotAsset = async (shotIndex:number, assetId:string) => {
-    const key=`${shotIndex}_${assetId}`; setGeneratingAssetKey(key); const shot=project.shots[shotIndex]; const asset=shot.assets.find((a)=>a.id===assetId)||shot.assets[0];
+    const key=`${shotIndex}_${assetId}`;
+    setGeneratingAssetKey(key);
+    const shot=project.shots[shotIndex];
+    const asset=shot.assets.find((a)=>a.id===assetId)||shot.assets[0];
     const style=VISUAL_STYLES.find((s)=>s.id===shot.visualStyle) || VISUAL_STYLES[0];
     const prompt=`${asset?.assetPrompt || `Documentary image regarding ${project.title}, beat ${shot.order}`}. STYLE SYSTEM: ${style.name}. Compose for ${shot.layout} layout. Variant: ${shot.styleVariant||'clean'}.`;
     setProject((prev)=>({...prev,shots:prev.shots.map((s,i)=>i===shotIndex?{...s,assets:s.assets.map((a)=>a.id===assetId?{...a,status:'generating'}:a)}:s)}));
@@ -124,8 +127,34 @@ export default function App() {
   };
 
   const handleUploadShotAsset = async (shotIndex:number, assetId:string, file:File) => {
-    const key=`${shotIndex}_${assetId}`; setGeneratingAssetKey(key); const reader=new FileReader();
-    reader.onload=async()=>{try{const response=await fetch('/api/assets/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({imageBase64:reader.result as string,shotId:project.shots[shotIndex].shot_id,assetId})});const result=await response.json();if(result.success&&result.url)setProject((prev)=>({...prev,shots:prev.shots.map((s,i)=>i===shotIndex?{...s,assets:s.assets.map(a=>a.id===assetId?{...a,source:result.url,provider:'upload',status:'ready',paperCutout:true}:a)}:s)}));}catch(err){console.error('Upload asset error:',err);}finally{setGeneratingAssetKey(null);}}; reader.readAsDataURL(file);
+    if (!file.type.startsWith('image/')) {
+      console.error('Upload asset error: selected file is not an image');
+      return;
+    }
+    if (file.size > 25 * 1024 * 1024) {
+      console.error('Upload asset error: image exceeds 25MB');
+      return;
+    }
+    const shot = project.shots[shotIndex];
+    if (!shot) return;
+    const key=`${shotIndex}_${assetId}`;
+    setGeneratingAssetKey(key);
+    setProject((prev)=>({...prev,shots:prev.shots.map((s,i)=>i===shotIndex?{...s,assets:s.assets.map((a)=>a.id===assetId?{...a,status:'generating'}:a)}:s)}));
+    try {
+      const imageBase64 = await new Promise<string>((resolve,reject)=>{
+        const reader=new FileReader();
+        reader.onerror=()=>reject(new Error('Could not read image file'));
+        reader.onload=()=>resolve(String(reader.result||''));
+        reader.readAsDataURL(file);
+      });
+      const response=await fetch('/api/assets/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({imageBase64,shotId:shot.shot_id,assetId})});
+      const result=await response.json().catch(()=>({}));
+      if(!response.ok || !result.success || !result.url) throw new Error(result.error||`Upload failed (${response.status})`);
+      setProject((prev)=>({...prev,shots:prev.shots.map((s,i)=>i===shotIndex?{...s,assets:s.assets.map((a)=>a.id===assetId?{...a,source:result.url,provider:'upload',status:'ready',paperCutout:true}:a)}:s)}));
+    } catch(err) {
+      console.error('Upload asset error:',err);
+      setProject((prev)=>({...prev,shots:prev.shots.map((s,i)=>i===shotIndex?{...s,assets:s.assets.map((a)=>a.id===assetId?{...a,status:'pending'}:a)}:s)}));
+    } finally { setGeneratingAssetKey(null); }
   };
 
   const handleGenerateVoiceAndTimeline = async (voiceId?:string, provider?:TTSProviderChoice, language?:string) => {
@@ -143,7 +172,7 @@ export default function App() {
         {activeTab==='overview'&&<ProjectOverviewView project={project} topic={topic} setTopic={setTopic} duration={duration} setDuration={setDuration} onGenerateStoryboard={handleGenerateStoryboard} isGenerating={isGenerating} onJumpToCanvas={()=>setActiveTab('canvas')} lang={lang} visualDirectionMode={visualDirectionMode} manualVisualStyle={manualVisualStyle} onVisualModeChange={handleVisualModeChange} onManualStyleChange={handleManualStyleChange}/>} 
         {activeTab==='script'&&<ScriptEditorView project={project} onUpdateProjectScript={handleUpdateProjectScript} activeShotIndex={activeShotIndex} setActiveShotIndex={setActiveShotIndex} onJumpToShot={(shotIdx)=>{setActiveShotIndex(shotIdx);setActiveTab('canvas')}} onGenerateVoiceAndTimeline={handleGenerateVoiceAndTimeline} isGeneratingVoice={isGeneratingVoice} lang={lang}/>} 
         {activeTab==='voice'&&<VoiceStudioView project={project} ttsProvider={ttsProvider} setTtsProvider={setTtsProvider} selectedVoice={selectedVoice} setSelectedVoice={setSelectedVoice} selectedLanguage={selectedTTSLanguage} setSelectedLanguage={setSelectedTTSLanguage} onGenerateVoiceAndTimeline={handleGenerateVoiceAndTimeline} isGeneratingVoice={isGeneratingVoice} voiceNotice={voiceNotice} setVoiceNotice={setVoiceNotice} onJumpToCanvas={()=>setActiveTab('canvas')} lang={lang}/>} 
-        {activeTab==='inspector'&&<AssetInspectorView project={project} activeShotIndex={activeShotIndex} onUpdateShot={handleUpdateShot} lang={lang}/>} 
+        {activeTab==='inspector'&&<AssetInspectorView project={project} activeShotIndex={activeShotIndex} setActiveShotIndex={setActiveShotIndex} onUpdateShot={handleUpdateShot} onGenerateShotAsset={handleGenerateShotAsset} onUploadShotAsset={handleUploadShotAsset} generatingAssetKey={generatingAssetKey}/>} 
       </div>
     </div>
     {isPresetDrawerOpen&&<PresetDrawer onClose={()=>setIsPresetDrawerOpen(false)} onApply={(preset)=>setProject((prev)=>({...prev,...preset}))} lang={lang}/>} 
