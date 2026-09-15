@@ -1,0 +1,86 @@
+export type VisualDirectionMode = 'auto' | 'manual' | 'hybrid';
+export type VisualStyleId = 'classic_vox'|'investigative'|'newspaper'|'timeline'|'map_intelligence'|'data_documentary'|'blueprint'|'case_file'|'archive_museum'|'modern_editorial'|'financial_terminal'|'cyber_intelligence'|'scientific_lab'|'geopolitical'|'minimal_cinematic'|'photo_essay'|'split_screen'|'evidence_board'|'mixed_media';
+
+export const VISUAL_STYLES: Array<{id:VisualStyleId;name:string;bestFor:string[];layouts:string[]}> = [
+{id:'classic_vox',name:'Classic VOX',bestFor:['documentary','history'],layouts:['hero_archive','collage_board','photo_stack']},
+{id:'investigative',name:'Investigative',bestFor:['investigation','scandal','mystery'],layouts:['document','collage_board','hero_archive']},
+{id:'newspaper',name:'Newspaper',bestFor:['news','business','history'],layouts:['newspaper','photo_stack','big_number']},
+{id:'timeline',name:'Timeline',bestFor:['history','biography','events'],layouts:['timeline','big_number','photo_stack']},
+{id:'map_intelligence',name:'Map Intelligence',bestFor:['geography','war','migration','trade'],layouts:['map','collage_board','timeline']},
+{id:'data_documentary',name:'Data Documentary',bestFor:['statistics','research','economics'],layouts:['big_number','timeline','split_screen']},
+{id:'blueprint',name:'Blueprint',bestFor:['engineering','architecture','technology'],layouts:['document','split_screen','collage_board']},
+{id:'case_file',name:'Case File',bestFor:['crime','investigation','scandal'],layouts:['collage_board','document','photo_stack']},
+{id:'archive_museum',name:'Archive Museum',bestFor:['ancient','culture','artifacts','biography'],layouts:['hero_archive','photo_stack','document']},
+{id:'modern_editorial',name:'Modern Editorial',bestFor:['business','technology','culture'],layouts:['split_screen','hero_archive','big_number']},
+{id:'financial_terminal',name:'Financial Terminal',bestFor:['finance','markets','economics'],layouts:['big_number','split_screen','timeline']},
+{id:'cyber_intelligence',name:'Cyber Intelligence',bestFor:['cyber','internet','ai','networks'],layouts:['collage_board','split_screen','big_number']},
+{id:'scientific_lab',name:'Scientific Lab',bestFor:['science','biology','physics','space'],layouts:['document','split_screen','hero_archive']},
+{id:'geopolitical',name:'Geopolitical',bestFor:['geopolitics','war','diplomacy','trade'],layouts:['map','split_screen','timeline']},
+{id:'minimal_cinematic',name:'Minimal Cinematic',bestFor:['opening','ending','dramatic'],layouts:['hero_archive','big_number']},
+{id:'photo_essay',name:'Photo Essay',bestFor:['biography','travel','culture','human'],layouts:['hero_archive','photo_stack','split_screen']},
+{id:'split_screen',name:'Split Screen',bestFor:['comparison','versus','before after'],layouts:['split_screen','big_number']},
+{id:'evidence_board',name:'Evidence Board',bestFor:['investigation','networks','history'],layouts:['collage_board','map','photo_stack']},
+{id:'mixed_media',name:'Mixed Media',bestFor:['long-form','complex','documentary'],layouts:['hero_archive','map','timeline','document','split_screen','collage_board','big_number']},
+];
+
+const containsAny = (text:string, terms:string[]) => terms.some((term) => text.includes(term));
+
+export function analyzeContent(narration:string, visualIdea='') {
+  const text = `${narration} ${visualIdea}`.toLowerCase();
+  const types:string[] = [];
+  if (/\b(19|20)\d{2}\b|history|historical|century|revolution|empire/.test(text)) types.push('historical_event');
+  if (/money|market|stock|bank|econom|revenue|inflation|finance|\$|%/.test(text)) types.push('economic');
+  if (/map|country|city|border|route|migration|global/.test(text)) types.push('geographic');
+  if (/data|number|million|billion|percent|statistics|rate/.test(text)) types.push('statistics');
+  if (/investig|crime|scandal|evidence|secret|leak/.test(text)) types.push('investigation');
+  if (/system|process|machine|technology|software|ai|engineering/.test(text)) types.push('technical');
+  if (!types.length) types.push('narrative');
+  return {text, types, serious:/crisis|war|death|scandal|collapse|shock|danger/.test(text), highImportance:/critical|key|turning point|shock|collapse|breakthrough/.test(text)};
+}
+
+function scoreStyle(style:typeof VISUAL_STYLES[number], analysis:ReturnType<typeof analyzeContent>) {
+  let score = 0;
+  const haystack = `${analysis.text} ${analysis.types.join(' ')}`;
+  for (const term of style.bestFor) if (haystack.includes(term)) score += 6;
+  const direct:Record<string,string[]> = {
+    map_intelligence:['geographic','war','migration','route','border'], geopolitical:['geopolit','diplomacy','trade','country'],
+    financial_terminal:['economic','finance','market','stock','bank'], data_documentary:['statistics','data','number'],
+    blueprint:['technical','engineering','machine','architecture'], scientific_lab:['science','biology','physics','experiment'],
+    investigative:['investigation','crime','scandal','evidence'], case_file:['investigation','crime','evidence'],
+    archive_museum:['historical_event','ancient','artifact'], timeline:['historical_event','date','year'],
+    split_screen:['comparison','versus','before','after','two sides'], cyber_intelligence:['cyber','internet','network','ai'],
+  };
+  for (const [id, terms] of Object.entries(direct)) if (id === style.id && containsAny(haystack, terms)) score += 12;
+  if (analysis.serious && ['investigative','case_file','geopolitical','archive_museum'].includes(style.id)) score += 3;
+  return score;
+}
+
+export function chooseStyle(narration:string, visualIdea:string, history:Array<{style?:string;layout?:string;motion?:string}>, mode:VisualDirectionMode='auto', manualStyle:VisualStyleId='classic_vox') {
+  const analysis = analyzeContent(narration, visualIdea);
+  if (mode === 'manual') {
+    const style = VISUAL_STYLES.find((s) => s.id === manualStyle) || VISUAL_STYLES[0];
+    return { style:style.id, variant:analysis.serious?'dramatic':'clean', layout:style.layouts[history.length % style.layouts.length], reason:['manual style lock'], diversityWarnings:[] };
+  }
+  const ranked = VISUAL_STYLES.map((style) => {
+    const recentStyleCount = history.slice(-5).filter((x) => x.style === style.id).length;
+    const recentLayoutCount = history.slice(-4).filter((x) => x.layout === style.layouts[0]).length;
+    return { style, score:scoreStyle(style,analysis) - recentStyleCount*18 - recentLayoutCount*5 };
+  }).sort((a,b)=>b.score-a.score);
+  const selected = ranked[0]?.style || VISUAL_STYLES[0];
+  const recentStyleCount = history.slice(-5).filter((x)=>x.style===selected.id).length;
+  const layout = selected.layouts[history.length % selected.layouts.length];
+  return { style:selected.id, variant:analysis.serious?'dramatic':analysis.highImportance?'dense':'clean', layout, reason:[`content:${analysis.types.join(',')}`,`tone:${analysis.serious?'serious':'neutral'}`], diversityWarnings:recentStyleCount>=2?['STYLE_REPETITION_HIGH']:[] };
+}
+
+export function directProjectVisuals(project:any, mode:VisualDirectionMode='auto', manualStyle:VisualStyleId='classic_vox') {
+  const history:Array<{style?:string;layout?:string;motion?:string}> = [];
+  const shots = (project.shots || []).map((shot:any) => {
+    const choice = chooseStyle(shot.narration || '', shot.visual_idea || '', history, mode, manualStyle);
+    history.push({style:choice.style,layout:choice.layout,motion:shot.assets?.[0]?.motion});
+    const style = VISUAL_STYLES.find((s)=>s.id===choice.style) || VISUAL_STYLES[0];
+    const allowedLayout = style.layouts.includes(shot.layout) && choice.style === 'classic_vox' ? shot.layout : choice.layout;
+    const assets = (shot.assets || []).map((asset:any) => ({...asset, assetPrompt:`${asset.assetPrompt || shot.visual_idea || project.title}. VISUAL STYLE: ${style.name}. VARIANT: ${choice.variant}. MATERIAL LANGUAGE: ${style.name} editorial system. Preserve documentary realism, clear subject separation, generous negative space, no watermark.`}));
+    return {...shot, visualStyle:choice.style, styleVariant:choice.variant, styleReason:choice.reason, layout:allowedLayout, assets};
+  });
+  return {...project, visualDirectionMode:mode, manualVisualStyle:manualStyle, shots};
+}
