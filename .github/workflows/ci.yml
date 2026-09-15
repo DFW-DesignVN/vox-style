@@ -23,8 +23,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install FFmpeg & FFprobe
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
       - name: Verify TypeScript Lint
         run: npm run lint
 
       - name: Test Production Build
         run: npm run build
+
+      - name: Run Automated Regression Tests
+        run: |
+          npx tsx server.ts &
+          sleep 4
+          npm test

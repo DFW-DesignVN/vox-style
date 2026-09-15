@@ -99,15 +99,28 @@ app.post('/api/render-final-video', async (req, res) => {
       } else {
         const cleanPath = voiceUrl.replace(/^\/+/, '');
         const candidateInCwd = path.resolve(process.cwd(), cleanPath);
-        const allowedOutputs = path.resolve(process.cwd(), 'outputs');
-        const allowedPublic = path.resolve(process.cwd(), 'public');
+        const safeDirs = [
+          path.resolve(process.cwd(), 'outputs'),
+          path.resolve(process.cwd(), 'public'),
+        ];
 
-        // Security check: only allow files inside outputs/ or public/
-        if (!candidateInCwd.startsWith(allowedOutputs) && !candidateInCwd.startsWith(allowedPublic)) {
-          return res.status(400).json({ error: 'Security violation: voiceUrl must resolve within outputs/ or public/ directory' });
+        const isContained = (targetPath: string) =>
+          safeDirs.some((dir) => {
+            const rel = path.relative(dir, targetPath);
+            return !rel.startsWith('..') && !path.isAbsolute(rel);
+          });
+
+        // Security check: strict path containment (cannot match outputs_evil or traverse)
+        if (!isContained(candidateInCwd)) {
+          return res.status(400).json({ error: 'Security violation: voiceUrl must reside strictly inside outputs/ or public/' });
         }
 
         if (fs.existsSync(candidateInCwd)) {
+          // Prevent symlink traversal out of safe directories
+          const realTarget = fs.realpathSync(candidateInCwd);
+          if (!isContained(realTarget)) {
+            return res.status(400).json({ error: 'Security violation: symlink traversal outside allowed directories detected' });
+          }
           resolvedAudioPath = candidateInCwd;
         }
       }
@@ -126,11 +139,11 @@ app.post('/api/render-final-video', async (req, res) => {
     await execAsync(ffmpegCmd);
     fs.rmSync(projectDir, { recursive: true, force: true });
 
-    // Rigorous FFprobe verification of output MP4
-    const probeCmd = `ffprobe -v error -show_entries stream=codec_name,codec_type -of json "${outputMp4Path}"`;
+    // Rigorous FFprobe verification of output MP4 (codecs, streams, container)
+    const probeCmd = `ffprobe -v error -show_entries stream=codec_name,codec_type,duration:format=duration,format_name -of json "${outputMp4Path}"`;
     const { stdout: probeStdout } = await execAsync(probeCmd);
     const probeData = JSON.parse(probeStdout || '{}');
-    const streams: Array<{ codec_name: string; codec_type: string }> = Array.isArray(probeData.streams)
+    const streams: Array<{ codec_name: string; codec_type: string; duration?: string }> = Array.isArray(probeData.streams)
       ? probeData.streams
       : [];
 
@@ -138,11 +151,19 @@ app.post('/api/render-final-video', async (req, res) => {
     const audioStream = streams.find((s) => s.codec_type === 'audio');
 
     if (!videoStream) {
-      throw new Error('FFprobe verification failed: Rendered MP4 does not contain a valid video stream.');
+      throw new Error('FFprobe verification failed: Rendered MP4 does not contain a video stream.');
+    }
+    if (videoStream.codec_name !== 'h264') {
+      throw new Error(`FFprobe verification failed: Video codec must be h264, found: ${videoStream.codec_name}`);
     }
 
-    if (hasAudio && !audioStream) {
-      throw new Error('FFprobe verification failed: Audio track was specified but rendered MP4 contains no audio stream.');
+    if (hasAudio) {
+      if (!audioStream) {
+        throw new Error('FFprobe verification failed: Audio track was specified but rendered MP4 contains no audio stream.');
+      }
+      if (audioStream.codec_name !== 'aac') {
+        throw new Error(`FFprobe verification failed: Audio codec must be aac, found: ${audioStream.codec_name}`);
+      }
     }
 
     res.json({
@@ -155,6 +176,9 @@ app.post('/api/render-final-video', async (req, res) => {
       verifiedStreams: {
         video: videoStream.codec_name,
         audio: audioStream ? audioStream.codec_name : null,
+        container: probeData.format?.format_name || 'mp4',
+        duration: Number(probeData.format?.duration) || null,
+        strictVerified: true,
       },
     });
   } catch (err: any) {
