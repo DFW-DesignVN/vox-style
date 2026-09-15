@@ -1,4 +1,4 @@
-import { buildScriptSystemPrompt, calculateTargetWords, countWords, validateScript } from '../server/scriptEngine.ts';
+import { buildScriptSystemPrompt, calculateTargetWords, countWords, validateScript } from '../src/utils/scriptEngine.ts';
 
 const target = calculateTargetWords(60, 2.5);
 if (target !== 150) throw new Error(`Expected 150 words, got ${target}`);
