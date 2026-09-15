@@ -11,6 +11,17 @@ export function calculateMotionTransform(motion:MotionID,shotTime:number,startTi
   case 'paper_flip_vertical':{const p=t(.72),e=stepped(.72,18),angle=e*Math.PI;return{offsetX:18*Math.sin(angle),offsetY:0,scale:.99+.01*Math.sin(angle),scaleX:1,scaleY:Math.max(.035,Math.abs(Math.cos(angle))),rotation:Math.sin(angle)*1.2,opacity:Math.min(1,p*5),progress:p};}
   case 'photo_flip':{const p=t(.65),e=stepped(.65,16),angle=e*Math.PI;return{offsetX:0,offsetY:-10*Math.sin(angle),scale:.98+.02*Math.sin(angle),scaleX:Math.max(.04,Math.abs(Math.cos(angle))),scaleY:1,rotation:(1-e)*4,opacity:Math.min(1,p*5),progress:p};}
   case 'card_flip':{const p=t(.58),e=stepped(.58,14),angle=e*Math.PI;return{offsetX:0,offsetY:-12*Math.sin(angle),scale:.98+.02*Math.sin(angle),scaleX:Math.max(.05,Math.abs(Math.cos(angle))),scaleY:1,rotation:(1-e)*-5,opacity:Math.min(1,p*6),progress:p};}
+  case 'paper_curl':{const p=t(.7),e=stepped(.7,18);return{offsetX:10*Math.sin(e*Math.PI),offsetY:-8*Math.sin(e*Math.PI),scale:1,scaleX:.72+.28*Math.cos((1-e)*Math.PI/2),scaleY:1,rotation:(1-e)*-4,opacity:.25+.75*p,progress:p};}
+  case 'paper_uncurl':{const p=t(.7),e=stepped(.7,18);return{offsetX:-10*Math.sin((1-e)*Math.PI),offsetY:8*Math.sin((1-e)*Math.PI),scale:1,scaleX:.72+.28*Math.sin(e*Math.PI/2),scaleY:1,rotation:(1-e)*4,opacity:.25+.75*p,progress:p};}
+  case 'paper_tear':{const p=t(.62),e=stepped(.62,14);return{offsetX:0,offsetY:18*(1-e),scale:.96+.04*e,scaleX:.55+.45*e,scaleY:1,rotation:(1-e)*-1.5,opacity:Math.min(1,p*5),progress:p};}
+  case 'tape_peel':{const p=t(.55),e=stepped(.55,16);return{offsetX:26*(1-e),offsetY:-10*Math.sin(e*Math.PI),scale:1,scaleX:.45+.55*e,scaleY:1,rotation:(1-e)*-12,opacity:Math.min(1,p*6),progress:p};}
+  case 'photo_swing':{const p=t(.9),e=settle(p,1.02);return{offsetX:0,offsetY:8*Math.sin(e*Math.PI*2)*(1-e*.25),scale:1,rotation:Math.sin(e*Math.PI*2)*5*(1-e),opacity:Math.min(1,p*4),progress:p};}
+  case 'photo_rotate':{const p=t(.6),e=settle(stepped(.6,12),1.04);return{offsetX:0,offsetY:12*(1-e),scale:.92+.08*e,rotation:(1-e)*14,opacity:Math.min(1,p*5),progress:p};}
+  case 'stack_shuffle':{const p=t(.75),e=stepped(.75,12);return{offsetX:Math.sin(e*Math.PI*3)*18*(1-e),offsetY:-55*(1-e),scale:.94+.06*e,rotation:Math.sin(e*Math.PI*2)*4*(1-e),opacity:Math.min(1,p*4),progress:p};}
+  case 'stamp_slam':{const p=t(.32),e=settle(p,1.22);return{offsetX:Math.sin(p*Math.PI*8)*4*(1-p),offsetY:-70*(1-p),scale:.72+.28*e,rotation:(1-p)*-7,opacity:Math.min(1,p*7),progress:p};}
+  case 'camera_push':{const p=t(1.1);return{offsetX:0,offsetY:0,scale:.94+.06*p,rotation:0,opacity:1,progress:p};}
+  case 'camera_pull':{const p=t(1.1);return{offsetX:0,offsetY:0,scale:1.06-.06*p,rotation:0,opacity:1,progress:p};}
+  case 'jitter':{const p=t(.35),e=1-p;return{offsetX:Math.sin(elapsed*75)*5*e,offsetY:Math.cos(elapsed*61)*3*e,scale:1,rotation:Math.sin(elapsed*48)*1.2*e,opacity:1,progress:p};}
   case 'paper_drop':{const p=t(.45),e=settle(stepped(.45,10),1.05);return{offsetX:0,offsetY:-450*(1-e),scale:.95+.05*e,rotation:Math.sin(p*Math.PI)*2.5,opacity:Math.min(1,p*4),progress:p};}
   case 'paper_slide_left':{const p=t(.5),e=settle(stepped(.5),1.04);return{offsetX:550*(1-e),offsetY:0,scale:1,rotation:(1-e)*2,opacity:Math.min(1,p*5),progress:p};}
   case 'paper_slide_right':{const p=t(.5),e=settle(stepped(.5),1.04);return{offsetX:-550*(1-e),offsetY:0,scale:1,rotation:-(1-e)*2,opacity:Math.min(1,p*5),progress:p};}
