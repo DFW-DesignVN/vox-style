@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx tests/pipeline.test.ts && tsx tests/image-pipeline.test.ts && tsx tests/visual-director.test.ts && tsx tests/visual-theme.test.ts && tsx tests/script-engine.test.ts && tsx tests/composition-engine.test.ts && tsx tests/semantic-visual-director.test.ts"
+    "test": "tsx tests/pipeline.test.ts && tsx tests/image-pipeline.test.ts && tsx tests/visual-director.test.ts && tsx tests/visual-theme.test.ts && tsx tests/script-engine.test.ts && tsx tests/composition-engine.test.ts && tsx tests/semantic-visual-director.test.ts && tsx tests/physical-collage.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
