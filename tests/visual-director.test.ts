@@ -15,4 +15,6 @@ if (VISUAL_STYLES.length !== 19) throw new Error(`Expected 19 styles, got ${VISU
 if (directed.shots.some((s:any)=>!s.visualStyle || !s.styleVariant || !s.styleReason?.length)) throw new Error('Visual direction metadata missing');
 if (new Set(directed.shots.map((s:any)=>s.visualStyle)).size < 2) throw new Error('Director failed to diversify style choices');
 if (directed.shots.some((s:any)=>!s.assets[0].assetPrompt.includes('VISUAL STYLE:'))) throw new Error('Style was not injected into asset prompts');
+if (directed.shots.some((s:any)=>!s.assets[0].compositionFrame || !Number.isFinite(s.assets[0].compositionFrame.x) || !Number.isFinite(s.assets[0].compositionFrame.w))) throw new Error('Composition frame was not attached to generated image assets');
+if (directed.shots.some((s:any)=>s.assets[0].position.x < 0 || s.assets[0].position.x > 100 || s.assets[0].position.y < 0 || s.assets[0].position.y > 100)) throw new Error('Composition position escaped canvas bounds');
 console.log(`Visual director test: PASS (${directed.shots.map((s:any)=>s.visualStyle).join(', ')})`);
