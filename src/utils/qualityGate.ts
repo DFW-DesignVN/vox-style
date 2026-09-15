@@ -1,4 +1,5 @@
 import { Project, QualityGateResult } from '../types.ts';
+import { validateScript } from '../../server/scriptEngine.ts';
 
 const SAFE_MIN = 6;
 const SAFE_MAX = 94;
@@ -17,10 +18,35 @@ function detectLayoutCollisions(project: Project): string[] {
   return issues;
 }
 
+function validateProjectScript(project: Project) {
+  const sectionTypes = ['cold_open','context','development','turning_point','consequence','ending'] as const;
+  const sections = [...project.shots]
+    .sort((a,b)=>a.start-b.start)
+    .map((shot,index)=>({
+      id: shot.shot_id,
+      type: sectionTypes[Math.min(index, sectionTypes.length-1)],
+      title: `Shot ${shot.order}`,
+      text: shot.narration || '',
+      targetWords: 0,
+      actualWords: 0,
+    }));
+  return validateScript({ narration: project.script, sections }, {
+    durationSeconds: project.duration,
+    wordsPerSecond: 2.5,
+    tolerancePercent: 8,
+    minSections: Math.min(4, Math.max(1, project.shots.length)),
+    maxSections: Math.max(12, project.shots.length),
+  });
+}
+
 export function runQualityGate(project: Project, ffmpegAvailable: boolean): QualityGateResult {
   const messages:string[]=[];
-  const scriptValid=typeof project.script==='string'&&project.script.trim().length>=15;
-  if(!scriptValid)messages.push('Kịch bản quá ngắn (cần tối thiểu 15 ký tự).');
+  const scriptValidation = validateProjectScript(project);
+  const scriptValid=typeof project.script==='string'&&project.script.trim().length>=15&&scriptValidation.valid;
+  if(!scriptValid){
+    messages.push(`Kịch bản chưa đạt QA: ${scriptValidation.actualWords}/${scriptValidation.targetWords} từ (${scriptValidation.deviationPercent.toFixed(1)}%).`);
+    for(const issue of scriptValidation.issues.slice(0,5)) messages.push(`Script QA: ${issue.message}`);
+  }
   const shots=[...project.shots].sort((a,b)=>a.start-b.start);
   const allShotsHaveAssets=shots.length>0&&shots.every(s=>Array.isArray(s.assets)&&s.assets.length>0);
   if(!allShotsHaveAssets)messages.push('Mỗi phân cảnh cần có ít nhất một hình ảnh tư liệu.');
