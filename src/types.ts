@@ -26,7 +26,12 @@ export interface VisualAsset {
   id: string;
   type: 'image' | 'texture' | 'stamp' | 'tape' | 'cutout';
   role: 'hero' | 'secondary' | 'background' | 'detail';
+  /** Resolved local/remote asset URL. Empty means the asset still needs generation. */
   source: string;
+  /** AI Director's semantic request for an asset generator. */
+  assetPrompt?: string;
+  /** Provider hint for a future Asset Engine, e.g. gemini, local, upload. */
+  provider?: string;
   position: { x: number; y: number }; // Percentage 0-100
   scale: number;
   rotation: number; // Degrees, e.g. -3 to +4
