@@ -9,161 +9,29 @@ const TEMP_DIR = path.join(process.cwd(), 'temp_renders');
 for (const dir of [OUTPUTS_DIR, ASSETS_DIR, TEMP_DIR]) fs.mkdirSync(dir, { recursive: true });
 
 export interface GenerateAssetParams {
-  prompt: string;
-  topic?: string;
-  shotId?: string;
-  assetId?: string;
-  role?: 'hero' | 'secondary' | 'background' | 'detail';
-  layout?: string;
-  style?: 'archival_photo' | 'newspaper' | 'document' | 'map' | 'ticker' | 'portrait';
+  prompt: string; topic?: string; shotId?: string; assetId?: string;
+  role?: 'hero'|'secondary'|'background'|'detail'; layout?: string;
+  style?: 'archival_photo'|'newspaper'|'document'|'map'|'ticker'|'portrait';
 }
 
-function safeName(value: string, fallback: string) {
-  return (value || fallback).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
+export interface AssetGenerationDiagnostics {
+  provider: 'gemini'|'archival_procedural_fallback'|'upload';
+  model?: string;
+  usedFallback: boolean;
+  providerError?: string;
 }
 
-function run(cmd: string, args: string[], input?: Buffer): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { stdio: ['pipe', 'ignore', 'pipe'] });
-    let stderr = '';
-    child.stderr.on('data', (d) => (stderr += d.toString()));
-    child.on('error', reject);
-    child.on('close', (code) => code === 0 ? resolve() : reject(new Error(stderr || `${cmd} exited with ${code}`)));
-    if (input) child.stdin.end(input); else child.stdin.end();
-  });
-}
+function safeName(value: string, fallback: string) { return (value || fallback).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80); }
+function run(cmd: string, args: string[], input?: Buffer): Promise<void> { return new Promise((resolve,reject)=>{ const child=spawn(cmd,args,{stdio:['pipe','ignore','pipe']}); let stderr=''; child.stderr.on('data',d=>stderr+=d.toString()); child.on('error',reject); child.on('close',code=>code===0?resolve():reject(new Error(stderr||`${cmd} exited with ${code}`))); if(input) child.stdin.end(input); else child.stdin.end(); }); }
+async function ffprobeSize(file:string):Promise<{width:number;height:number}>{return new Promise((resolve,reject)=>{const c=spawn('ffprobe',['-v','error','-select_streams','v:0','-show_entries','stream=width,height','-of','csv=p=0:s=x',file],{stdio:['ignore','pipe','pipe']});let o='',e='';c.stdout.on('data',d=>o+=d);c.stderr.on('data',d=>e+=d);c.on('error',reject);c.on('close',code=>{if(code!==0)return reject(new Error(e||'ffprobe failed'));const[w,h]=o.trim().split('x').map(Number);if(!w||!h)return reject(new Error('Unable to determine image dimensions'));resolve({width:w,height:h});});});}
+function createPaperMask(width:number,height:number):Buffer{const pixels=Buffer.alloc(width*height);const edge=Math.max(8,Math.round(Math.min(width,height)*.035));const noise=(x:number,y:number)=>{const n=Math.sin((x*12.9898+y*78.233+9176)*.017)*43758.5453;return n-Math.floor(n)};for(let y=0;y<height;y++)for(let x=0;x<width;x++){const d=Math.min(x,width-1-x,y,height-1-y);const wobble=(noise(Math.floor(x/7),Math.floor(y/7))-.5)*edge*1.6;pixels[y*width+x]=d+wobble>edge?255:Math.max(0,Math.round(((d+wobble)/edge)*255));}return pixels;}
+async function makePaperCutout(inputPath:string,outputPath:string){const{width,height}=await ffprobeSize(inputPath);const base=path.basename(outputPath,'.png');const maskPath=path.join(TEMP_DIR,`${base}_mask.png`);const normalized=path.join(TEMP_DIR,`${base}_normalized.png`);try{await run('ffmpeg',['-y','-f','rawvideo','-pix_fmt','gray','-s',`${width}x${height}`,'-i','pipe:0','-frames:v','1',maskPath],createPaperMask(width,height));await run('ffmpeg',['-y','-i',inputPath,'-vf','format=rgba',normalized]);await run('ffmpeg',['-y','-i',normalized,'-i',maskPath,'-filter_complex','[0:v][1:v]alphamerge,format=rgba','-frames:v','1',outputPath]);}finally{for(const f of[maskPath,normalized])if(fs.existsSync(f))fs.unlinkSync(f);}}
+async function svgToPng(svg:string,outputPath:string){const p=path.join(TEMP_DIR,`${path.basename(outputPath,'.png')}.svg`);fs.writeFileSync(p,svg,'utf8');try{await run('ffmpeg',['-y','-i',p,'-frames:v','1','-pix_fmt','rgba',outputPath]);}finally{if(fs.existsSync(p))fs.unlinkSync(p);}}
+function proceduralSvg(prompt:string,topic:string,style='archival_photo'){const title=(topic||'HISTORICAL RECORD').toUpperCase().replace(/[<&>]/g,'').slice(0,34);const label=(prompt||'ARCHIVAL RECORD').replace(/[<&>]/g,'').slice(0,48);if(style==='map')return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800"><rect width="1200" height="800" fill="#e8dfc2"/><g fill="none" stroke="#514633" stroke-width="3" opacity=".7"><path d="M40 180 C220 70 360 260 540 150 S900 100 1160 220"/><path d="M30 360 C220 260 390 470 610 330 S900 300 1180 430"/><path d="M50 600 C280 500 420 690 680 560 S960 500 1150 620"/></g><path d="M180 620 C380 420 650 300 930 180" stroke="#c71919" stroke-width="10" fill="none"/><polygon points="930,180 895,178 918,210" fill="#c71919"/><text x="70" y="90" font-family="Georgia" font-size="44" font-weight="bold" fill="#151515">${title}</text><text x="70" y="745" font-family="monospace" font-size="20" fill="#151515">ARCHIVAL MAP · ${label}</text></svg>`;if(style==='document'||style==='newspaper')return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="850"><rect width="1200" height="850" fill="#e5d9b5"/><rect x="35" y="35" width="1130" height="780" fill="#f5eedc" stroke="#171717" stroke-width="5"/><text x="600" y="105" text-anchor="middle" font-family="Georgia" font-size="46" font-weight="bold">${title}</text><line x1="70" y1="135" x2="1130" y2="135" stroke="#171717" stroke-width="4"/><g fill="#29251f" opacity=".78">${Array.from({length:24},(_,i)=>`<rect x="90" y="${185+i*25}" width="${760-(i%5)*70}" height="8"/>`).join('')}</g><rect x="875" y="185" width="220" height="300" fill="#242424"/><circle cx="985" cy="270" r="48" fill="#555"/><path d="M930 410 Q985 330 1040 410" fill="#555"/><g transform="translate(210 700) rotate(-7)"><rect x="-130" y="-40" width="260" height="80" fill="none" stroke="#d21f1f" stroke-width="6"/><text x="0" y="8" text-anchor="middle" font-family="monospace" font-size="28" font-weight="bold" fill="#d21f1f">ARCHIVE</text></g></svg>`;return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800"><rect width="1200" height="800" fill="#252525"/><rect x="35" y="35" width="1130" height="730" fill="#3a3a3a" stroke="#eee" stroke-width="18"/><circle cx="600" cy="300" r="145" fill="#666"/><path d="M390 650 Q600 390 810 650" fill="#666"/><text x="600" y="725" text-anchor="middle" font-family="monospace" font-size="22" fill="#f4eeda">${label}</text></svg>`;}
 
-async function ffprobeSize(file: string): Promise<{ width: number; height: number }> {
-  return new Promise((resolve, reject) => {
-    const child = spawn('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=p=0:s=x', file], { stdio: ['ignore', 'pipe', 'pipe'] });
-    let out = '';
-    let err = '';
-    child.stdout.on('data', d => (out += d.toString()));
-    child.stderr.on('data', d => (err += d.toString()));
-    child.on('error', reject);
-    child.on('close', code => {
-      if (code !== 0) return reject(new Error(err || 'ffprobe failed'));
-      const [w, h] = out.trim().split('x').map(Number);
-      if (!w || !h) return reject(new Error('Unable to determine image dimensions'));
-      resolve({ width: w, height: h });
-    });
-  });
-}
+async function generateWithGemini(prompt:string):Promise<{data:Buffer;model:string}|{data:null;model:string;error:string}>{const key=process.env.GEMINI_API_KEY;const model=process.env.GEMINI_IMAGE_MODEL||'gemini-3.1-flash-image';if(!key)return{data:null,model,error:'GEMINI_API_KEY is not configured'};try{const ai=new GoogleGenAI({apiKey:key});const response=await ai.models.generateContent({model,contents:prompt,config:{responseModalities:['IMAGE'] as any,responseFormat:{image:{aspectRatio:'16:9',imageSize:(process.env.GEMINI_IMAGE_SIZE||'1K')}}} as any});const parts=response.candidates?.[0]?.content?.parts||[];for(const part of parts as any[]){if(part.inlineData?.data)return{data:Buffer.from(part.inlineData.data,'base64'),model};}return{data:null,model,error:'Gemini returned no inline image data'};}catch(error:any){const message=String(error?.message||error||'Unknown Gemini image error').replace(/(AIza[0-9A-Za-z_-]{20,})/g,'[REDACTED_API_KEY]');console.warn('[IMAGE][Gemini]',message);return{data:null,model,error:message};}}
 
-/** Deterministic transparent alpha mask with an irregular paper edge. */
-function createPaperMask(width: number, height: number): Buffer {
-  const pixels = Buffer.alloc(width * height);
-  const edge = Math.max(8, Math.round(Math.min(width, height) * 0.035));
-  const noise = (x: number, y: number) => {
-    const n = Math.sin((x * 12.9898 + y * 78.233 + 9176) * 0.017) * 43758.5453;
-    return n - Math.floor(n);
-  };
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const d = Math.min(x, width - 1 - x, y, height - 1 - y);
-      const wobble = (noise(Math.floor(x / 7), Math.floor(y / 7)) - 0.5) * edge * 1.6;
-      pixels[y * width + x] = d + wobble > edge ? 255 : Math.max(0, Math.round(((d + wobble) / edge) * 255));
-    }
-  }
-  return pixels;
-}
+export async function generateAsset(params:GenerateAssetParams){const id=safeName(params.assetId||`asset_${Date.now()}`,'asset');const shot=safeName(params.shotId||'shot','shot');const rawPath=path.join(TEMP_DIR,`${shot}_${id}_raw.png`);const outputPath=path.join(ASSETS_DIR,`${shot}_${id}.png`);const style=params.style||inferStyle(params.layout,params.prompt);const prompt=`${params.prompt}\n\nVOX DOCUMENTARY VISUAL DIRECTOR RULES: realistic archival evidence, historically plausible, hand-cut paper collage source image, monochrome/sepia high contrast, strong subject separation, clean negative space, no modern UI, no logos, no watermark, no invented text unless explicitly requested, 16:9 composition.`;const gemini=await generateWithGemini(prompt);let image:Buffer;let provider:'gemini'|'archival_procedural_fallback';let providerError:string|undefined;if(gemini.data){image=gemini.data;provider='gemini';}else{providerError=gemini.error;const fallbackEnabled=process.env.IMAGE_FALLBACK_ENABLED!=='0';if(!fallbackEnabled)throw new Error(`IMAGE_PROVIDER_FAILED:${gemini.error}`);provider='archival_procedural_fallback';await svgToPng(proceduralSvg(params.prompt,params.topic||'HISTORICAL RECORD',style),rawPath);image=fs.readFileSync(rawPath);}fs.writeFileSync(rawPath,image);try{await makePaperCutout(rawPath,outputPath);}catch(error:any){console.warn('[IMAGE] paper cutout failed:',error?.message||error);await run('ffmpeg',['-y','-i',rawPath,'-vf','scale=1200:-2,format=rgba',outputPath]);}if(fs.existsSync(rawPath))fs.unlinkSync(rawPath);return{success:true,url:`/outputs/assets/${path.basename(outputPath)}`,provider,model:gemini.model,usedFallback:provider!=='gemini',providerError,cutout:true,cutoutMode:'irregular-alpha-paper-edge'};}
 
-async function makePaperCutout(inputPath: string, outputPath: string): Promise<void> {
-  const { width, height } = await ffprobeSize(inputPath);
-  const maskRaw = createPaperMask(width, height);
-  const base = path.basename(outputPath, '.png');
-  const maskPath = path.join(TEMP_DIR, `${base}_mask.png`);
-  const normalizedInput = path.join(TEMP_DIR, `${base}_normalized.png`);
-  try {
-    await run('ffmpeg', ['-y', '-f', 'rawvideo', '-pix_fmt', 'gray', '-s', `${width}x${height}`, '-i', 'pipe:0', '-frames:v', '1', maskPath], maskRaw);
-    await run('ffmpeg', ['-y', '-i', inputPath, '-vf', 'format=rgba', normalizedInput]);
-    await run('ffmpeg', ['-y', '-i', normalizedInput, '-i', maskPath, '-filter_complex', '[0:v][1:v]alphamerge,format=rgba', '-frames:v', '1', outputPath]);
-  } finally {
-    for (const file of [maskPath, normalizedInput]) if (fs.existsSync(file)) fs.unlinkSync(file);
-  }
-}
-
-async function svgToPng(svg: string, outputPath: string): Promise<void> {
-  const svgPath = path.join(TEMP_DIR, `${path.basename(outputPath, '.png')}.svg`);
-  fs.writeFileSync(svgPath, svg, 'utf8');
-  try {
-    await run('ffmpeg', ['-y', '-i', svgPath, '-frames:v', '1', '-pix_fmt', 'rgba', outputPath]);
-  } finally {
-    if (fs.existsSync(svgPath)) fs.unlinkSync(svgPath);
-  }
-}
-
-function proceduralSvg(prompt: string, topic: string, style = 'archival_photo'): string {
-  const title = (topic || 'HISTORICAL RECORD').toUpperCase().replace(/[<&>]/g, '').slice(0, 34);
-  const label = (prompt || 'ARCHIVAL RECORD').replace(/[<&>]/g, '').slice(0, 48);
-  if (style === 'map') return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800"><rect width="1200" height="800" fill="#e8dfc2"/><g fill="none" stroke="#514633" stroke-width="3" opacity=".7"><path d="M40 180 C220 70 360 260 540 150 S900 100 1160 220"/><path d="M30 360 C220 260 390 470 610 330 S900 300 1180 430"/><path d="M50 600 C280 500 420 690 680 560 S960 500 1150 620"/></g><path d="M180 620 C380 420 650 300 930 180" stroke="#c71919" stroke-width="10" fill="none"/><polygon points="930,180 895,178 918,210" fill="#c71919"/><text x="70" y="90" font-family="Georgia" font-size="44" font-weight="bold" fill="#151515">${title}</text><text x="70" y="745" font-family="monospace" font-size="20" fill="#151515">ARCHIVAL MAP · ${label}</text></svg>`;
-  if (style === 'document' || style === 'newspaper') return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="850"><rect width="1200" height="850" fill="#e5d9b5"/><rect x="35" y="35" width="1130" height="780" fill="#f5eedc" stroke="#171717" stroke-width="5"/><text x="600" y="105" text-anchor="middle" font-family="Georgia" font-size="46" font-weight="bold">${title}</text><line x1="70" y1="135" x2="1130" y2="135" stroke="#171717" stroke-width="4"/><g fill="#29251f" opacity=".78">${Array.from({length:24},(_,i)=>`<rect x="90" y="${185+i*25}" width="${760-(i%5)*70}" height="8"/>`).join('')}</g><rect x="875" y="185" width="220" height="300" fill="#242424"/><circle cx="985" cy="270" r="48" fill="#555"/><path d="M930 410 Q985 330 1040 410" fill="#555"/><g transform="translate(210 700) rotate(-7)"><rect x="-130" y="-40" width="260" height="80" fill="none" stroke="#d21f1f" stroke-width="6"/><text x="0" y="8" text-anchor="middle" font-family="monospace" font-size="28" font-weight="bold" fill="#d21f1f">ARCHIVE</text></g></svg>`;
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800"><rect width="1200" height="800" fill="#252525"/><rect x="35" y="35" width="1130" height="730" fill="#3a3a3a" stroke="#eee" stroke-width="18"/><circle cx="600" cy="300" r="145" fill="#666"/><path d="M390 650 Q600 390 810 650" fill="#666"/><text x="600" y="725" text-anchor="middle" font-family="monospace" font-size="22" fill="#f4eeda">${label}</text></svg>`;
-}
-
-async function generateWithGemini(prompt: string): Promise<Buffer | null> {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) return null;
-  try {
-    const ai = new GoogleGenAI({ apiKey: key });
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.1-flash-image',
-      contents: prompt,
-      config: { responseModalities: ['TEXT', 'IMAGE'] as any },
-    });
-    const parts = response.candidates?.[0]?.content?.parts || [];
-    for (const part of parts as any[]) {
-      if (part.inlineData?.data) return Buffer.from(part.inlineData.data, 'base64');
-    }
-  } catch (error: any) {
-    console.warn('Gemini image generation failed:', error?.message || error);
-  }
-  return null;
-}
-
-export async function generateAsset(params: GenerateAssetParams) {
-  const id = safeName(params.assetId || `asset_${Date.now()}`, 'asset');
-  const shot = safeName(params.shotId || 'shot', 'shot');
-  const rawPath = path.join(TEMP_DIR, `${shot}_${id}_raw.png`);
-  const outputPath = path.join(ASSETS_DIR, `${shot}_${id}.png`);
-  const style = params.style || inferStyle(params.layout, params.prompt);
-  const prompt = `${params.prompt}\n\nVISUAL RULES: historical documentary evidence, realistic archival photography or authentic printed material, monochrome/sepia, high contrast, no modern UI, no logos, no watermark, no invented text unless requested, composition suitable for physical paper collage.`;
-  let image = await generateWithGemini(prompt);
-  let provider = 'gemini';
-  if (!image) {
-    provider = 'archival_procedural_fallback';
-    await svgToPng(proceduralSvg(params.prompt, params.topic || 'HISTORICAL RECORD', style), rawPath);
-    image = fs.readFileSync(rawPath);
-  } else fs.writeFileSync(rawPath, image);
-  try {
-    await makePaperCutout(rawPath, outputPath);
-  } catch (error: any) {
-    console.warn('Paper cutout processing failed; returning normalized PNG:', error?.message || error);
-    await run('ffmpeg', ['-y', '-i', rawPath, '-vf', 'scale=1200:-2,format=rgba', outputPath]);
-  }
-  if (fs.existsSync(rawPath)) fs.unlinkSync(rawPath);
-  return { success: true, url: `/outputs/assets/${path.basename(outputPath)}`, provider, cutout: true, cutoutMode: 'irregular-alpha-paper-edge' };
-}
-
-export async function processUploadedImage(imageBase64: string, shotId = 'shot', assetId = `upload_${Date.now()}`) {
-  const match = imageBase64.match(/^data:image\/(png|jpe?g|webp);base64,(.+)$/i);
-  if (!match) throw new Error('Only PNG, JPEG or WebP data URLs are supported');
-  const ext = match[1].toLowerCase().replace('jpeg', 'jpg');
-  const safeShot = safeName(shotId, 'shot');
-  const safeAsset = safeName(assetId, `upload_${Date.now()}`);
-  const rawPath = path.join(TEMP_DIR, `${safeShot}_${safeAsset}_upload.${ext}`);
-  const outputPath = path.join(ASSETS_DIR, `${safeShot}_${safeAsset}.png`);
-  fs.writeFileSync(rawPath, Buffer.from(match[2], 'base64'));
-  try { await makePaperCutout(rawPath, outputPath); }
-  finally { if (fs.existsSync(rawPath)) fs.unlinkSync(rawPath); }
-  return { success: true, url: `/outputs/assets/${path.basename(outputPath)}`, provider: 'upload', cutout: true, cutoutMode: 'irregular-alpha-paper-edge' };
-}
-
-function inferStyle(layout?: string, prompt?: string): GenerateAssetParams['style'] {
-  const text = `${layout || ''} ${prompt || ''}`.toLowerCase();
-  if (text.includes('map')) return 'map';
-  if (text.includes('newspaper')) return 'newspaper';
-  if (text.includes('document') || text.includes('dossier') || text.includes('telegram')) return 'document';
-  if (text.includes('portrait') || text.includes('person') || text.includes('leader')) return 'portrait';
-  return 'archival_photo';
-}
+export async function processUploadedImage(imageBase64:string,shotId='shot',assetId=`upload_${Date.now()}`){const match=imageBase64.match(/^data:image\/(png|jpe?g|webp);base64,(.+)$/i);if(!match)throw new Error('Only PNG, JPEG or WebP data URLs are supported');const ext=match[1].toLowerCase().replace('jpeg','jpg');const safeShot=safeName(shotId,'shot');const safeAsset=safeName(assetId,`upload_${Date.now()}`);const rawPath=path.join(TEMP_DIR,`${safeShot}_${safeAsset}_upload.${ext}`);const outputPath=path.join(ASSETS_DIR,`${safeShot}_${safeAsset}.png`);fs.writeFileSync(rawPath,Buffer.from(match[2],'base64'));try{await makePaperCutout(rawPath,outputPath);}finally{if(fs.existsSync(rawPath))fs.unlinkSync(rawPath);}return{success:true,url:`/outputs/assets/${path.basename(outputPath)}`,provider:'upload',usedFallback:false,cutout:true,cutoutMode:'irregular-alpha-paper-edge'};}
+function inferStyle(layout?:string,prompt?:string):GenerateAssetParams['style']{const text=`${layout||''} ${prompt||''}`.toLowerCase();if(text.includes('map'))return'map';if(text.includes('newspaper'))return'newspaper';if(text.includes('document')||text.includes('dossier')||text.includes('telegram'))return'document';if(text.includes('portrait')||text.includes('person')||text.includes('leader'))return'portrait';return'archival_photo';}
