@@ -31,8 +31,9 @@ export function runQualityGate(project: Project, ffmpegAvailable: boolean): Qual
   if (Math.abs(cursor - project.duration) > 0.2) timelineContinuous = false;
   if (!timelineContinuous) messages.push('Shot timeline has gaps, overlaps, or does not match project duration.');
 
+  // V0.1 renderer is visual-only. Voice is reported as a warning until the Voice Engine is wired in.
   const voiceValid = !project.voiceover || Boolean(project.voiceUrl);
-  if (!voiceValid) messages.push('Voiceover is enabled but no voice file is attached yet.');
+  if (!voiceValid) messages.push('Voiceover is enabled but no voice file is attached yet; V0.1 will render visuals only.');
 
   const readyToRender = scriptValid && allShotsHaveAssets && textWithinSafeArea && timelineContinuous && ffmpegAvailable;
   if (!ffmpegAvailable) messages.push('FFmpeg is not available.');
