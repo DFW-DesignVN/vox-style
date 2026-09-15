@@ -3,6 +3,7 @@ import { calculateMotionTransform } from './motionEngine.ts';
 import { drawAgedPaperBackground, drawMaskingTape, drawArchivalStamp, drawRedString, drawRedMarkerArrow } from './paperAssets.ts';
 import { getCachedImage, getOrLoadDecodedImage, getHalftonePatternCanvas } from './assetCache.ts';
 import { getClientVisualTheme } from '../visualDirector/StyleVisualTheme.ts';
+import { getCompositionFrame, getStyleTextAnchor } from '../visualDirector/CompositionEngine.ts';
 
 export { getCachedImage };
 
@@ -25,7 +26,7 @@ function fillPanel(ctx:CanvasRenderingContext2D, theme:ReturnType<typeof getClie
 function drawBackground(ctx:CanvasRenderingContext2D, shot:Shot, width:number,height:number, theme:ReturnType<typeof getClientVisualTheme>) {
   const style=shot.visualStyle||'classic_vox';
   ctx.fillStyle=theme.bg; ctx.fillRect(0,0,width,height);
-  if(['classic_vox','investigative','newspaper','case_file','evidence_board','mixed_media'].includes(style)) drawAgedPaperBackground(ctx,width,height,shot.background.type);
+  if(['classic_vox','investigative','newspaper','case_file','archive_museum','evidence_board','mixed_media'].includes(style)) drawAgedPaperBackground(ctx,width,height,shot.background.type);
   if(['map_intelligence','geopolitical'].includes(style)) {
     ctx.save();ctx.globalAlpha=.12;ctx.strokeStyle=theme.ink;ctx.lineWidth=1;
     for(let x=-width;x<width*2;x+=100){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x+height*.45,height);ctx.stroke();}
@@ -56,6 +57,42 @@ function drawFrameDecoration(ctx:CanvasRenderingContext2D, style:string, theme:R
   }
   if(style==='blueprint') {ctx.save();ctx.setLineDash([8,6]);ctx.strokeStyle=theme.secondary;ctx.globalAlpha=.45;ctx.strokeRect(x+12,y+12,w-24,h-24);ctx.restore();}
   if(style==='financial_terminal'||style==='cyber_intelligence'){ctx.fillStyle=theme.accent;ctx.globalAlpha=.75;ctx.fillRect(x,y,5,h);ctx.globalAlpha=1;}
+}
+
+function drawStyleGrammarOverlay(ctx:CanvasRenderingContext2D, style:string, theme:ReturnType<typeof getClientVisualTheme>, width:number,height:number,time:number) {
+  ctx.save();
+  if(style==='split_screen') {
+    ctx.strokeStyle=theme.accent;ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(width/2,70);ctx.lineTo(width/2,height-70);ctx.stroke();
+    ctx.fillStyle=theme.ink;ctx.font='700 16px monospace';ctx.fillText('A',width*.25-6,55);ctx.fillText('B',width*.75-6,55);
+  }
+  if(style==='evidence_board') {
+    ctx.strokeStyle=theme.accent;ctx.globalAlpha=.55;ctx.lineWidth=3;
+    const pts=[[width*.18,height*.22],[width*.50,height*.52],[width*.82,height*.26],[width*.32,height*.76],[width*.72,height*.78]];
+    for(let i=1;i<pts.length;i++){ctx.beginPath();ctx.moveTo(pts[i-1][0],pts[i-1][1]);ctx.lineTo(pts[i][0],pts[i][1]);ctx.stroke();}
+    ctx.globalAlpha=1;
+  }
+  if(style==='modern_editorial') {
+    ctx.fillStyle=theme.accent;ctx.fillRect(58,height*.10,220,5);ctx.fillStyle=theme.ink;ctx.font='700 12px sans-serif';ctx.fillText('EDITORIAL / VISUAL ESSAY',58,height*.09);
+  }
+  if(style==='photo_essay') {
+    ctx.fillStyle=theme.ink;ctx.font='500 12px sans-serif';ctx.fillText(`PHOTO ESSAY  /  ${String(Math.floor(time)+1).padStart(2,'0')}`,58,height-48);
+  }
+  if(style==='archive_museum') {
+    ctx.strokeStyle=theme.secondary;ctx.lineWidth=2;ctx.strokeRect(width*.08,height*.09,width*.84,height*.82);
+    ctx.fillStyle=theme.muted;ctx.font='12px Georgia';ctx.fillText('ARCHIVE EXHIBITION',width*.08,height*.065);
+  }
+  if(style==='data_documentary') {
+    ctx.strokeStyle=theme.secondary;ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(width*.06,height*.88);ctx.lineTo(width*.94,height*.88);ctx.stroke();
+    for(let i=0;i<8;i++){const bh=(i+1)*height*.018;ctx.fillStyle=i%3===0?theme.accent:theme.secondary;ctx.globalAlpha=.65;ctx.fillRect(width*.08+i*width*.045,height*.88-bh,width*.028,bh);}
+    ctx.globalAlpha=1;
+  }
+  if(style==='scientific_lab') {
+    ctx.strokeStyle=theme.secondary;ctx.globalAlpha=.5;ctx.lineWidth=1;ctx.beginPath();ctx.arc(width*.86,height*.20,70,0,Math.PI*2);ctx.stroke();ctx.beginPath();ctx.arc(width*.86,height*.20,48,0,Math.PI*2);ctx.stroke();ctx.globalAlpha=1;
+  }
+  if(style==='timeline') {
+    ctx.strokeStyle=theme.accent;ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(width*.08,height*.87);ctx.lineTo(width*.92,height*.87);ctx.stroke();
+  }
+  ctx.restore();
 }
 
 function drawHeaderOverlay(ctx:CanvasRenderingContext2D, shot:Shot, theme:ReturnType<typeof getClientVisualTheme>, width:number,height:number,time:number) {
@@ -92,19 +129,23 @@ export function renderShotFrame(ctx: CanvasRenderingContext2D, shot: Shot, shotT
   ctx.clearRect(0,0,width,height);
   drawBackground(ctx,shot,width,height,theme);
 
-  for(const asset of shot.assets){
-    if(shotTime<asset.start) continue;
+  const visibleAssets=shot.assets.filter(a=>shotTime>=a.start);
+  const assetCount=Math.max(1,visibleAssets.length);
+  for(let visibleIndex=0;visibleIndex<visibleAssets.length;visibleIndex++){
+    const asset=visibleAssets[visibleIndex];
     const tr=calculateMotionTransform(asset.motion,shotTime,asset.start); if(tr.opacity<=0) continue;
     ctx.save();ctx.globalAlpha=tr.opacity;
-    const px=asset.position.x/100*width+tr.offsetX, py=asset.position.y/100*height+tr.offsetY;
-    ctx.translate(px,py);ctx.rotate((asset.rotation+tr.rotation)*Math.PI/180);ctx.scale(asset.scale*tr.scale,asset.scale*tr.scale);
+    const frame=getCompositionFrame(style,visibleIndex,assetCount,asset.role);
+    const baseX=frame.x/100*width,baseY=frame.y/100*height;
+    const px=baseX+tr.offsetX, py=baseY+tr.offsetY;
+    ctx.translate(px,py);ctx.rotate((asset.rotation+tr.rotation)*Math.PI/180);
     const hero=asset.role==='hero';
-    let itemW=hero?620:420,itemH=hero?440:310;
-    if(['minimal_cinematic','photo_essay'].includes(style)){itemW=hero?980:520;itemH=hero?620:360;}
-    if(style==='split_screen'){itemW=hero?700:500;itemH=hero?500:350;}
-    if(['data_documentary','financial_terminal','cyber_intelligence'].includes(style)){itemW=hero?560:360;itemH=hero?400:250;}
+    let itemW=frame.w/100*width,itemH=frame.h/100*height;
+    if(asset.role==='detail') { itemW*=.72; itemH*=.72; }
+    if(asset.role==='background') { itemW=width*.88; itemH=height*.72; }
+    ctx.scale(asset.scale*tr.scale,asset.scale*tr.scale);
     const x=-itemW/2,y=-itemH/2,pad=style==='minimal_cinematic'||style==='photo_essay'?8:14;
-    drawFrameDecoration(ctx,style,theme,x,y,itemW,itemH);fillPanel(ctx,theme,x,y,itemW,itemH);
+    if(frame.panel) { drawFrameDecoration(ctx,style,theme,x,y,itemW,itemH); fillPanel(ctx,theme,x,y,itemW,itemH); }
     const img=getCachedImage(asset.source), iw=itemW-pad*2, ih=itemH-pad*2;
     if(img&&img.complete&&img.naturalWidth>0){
       ctx.save();ctx.beginPath();roundRect(ctx,x+pad,y+pad,iw,ih,Math.max(0,theme.radius-6));ctx.clip();ctx.filter=theme.imageFilter;
@@ -116,6 +157,7 @@ export function renderShotFrame(ctx: CanvasRenderingContext2D, shot: Shot, shotT
     } else {
       ctx.fillStyle=theme.panel;ctx.globalAlpha=.92;ctx.fillRect(x+pad,y+pad,iw,ih);ctx.globalAlpha=1;ctx.fillStyle=theme.muted;ctx.font='bold 14px monospace';ctx.textAlign='center';ctx.fillText(asset.status==='generating'?'GENERATING ASSET':'ASSET PENDING',0,0);
     }
+    if(frame.label){ctx.fillStyle=theme.ink;ctx.font='700 13px monospace';ctx.textAlign='left';ctx.fillText(frame.label,x+18,y+itemH-18);}
     if(style==='newspaper'){ctx.fillStyle=theme.ink;ctx.font='bold 15px Georgia';ctx.textAlign='left';ctx.fillText('ARCHIVE / REPORT',x+18,y+itemH-18);}
     if(['case_file','evidence_board'].includes(style)) drawArchivalStamp(ctx,'EXHIBIT',x+itemW-65,y+42,-8,theme.accent);
     if(['modern_editorial','photo_essay'].includes(style)){ctx.fillStyle=theme.ink;ctx.font='13px sans-serif';ctx.textAlign='left';ctx.fillText(asset.role.toUpperCase(),x+18,y+itemH-18);}
@@ -137,19 +179,25 @@ export function renderShotFrame(ctx: CanvasRenderingContext2D, shot: Shot, shotT
 
   for(const t of shot.text){
     if(shotTime<t.start)continue;const tr=calculateMotionTransform(t.motion,shotTime,t.start,t.content.length);if(tr.opacity<=0)continue;
-    ctx.save();const tx=t.position.x/100*width+tr.offsetX,ty=t.position.y/100*height+tr.offsetY;ctx.translate(tx,ty);ctx.rotate((t.rotation||0)*Math.PI/180);ctx.scale(tr.scale,tr.scale);
+    ctx.save();
+    let tx=t.position.x/100*width+tr.offsetX,ty=t.position.y/100*height+tr.offsetY;
+    if(t.role==='headline' || t.role==='date' || t.role==='label'){
+      const anchor=getStyleTextAnchor(style); if(anchor==='center') tx=width/2; else if(style==='modern_editorial') tx=width*.08;
+    }
+    ctx.translate(tx,ty);ctx.rotate((t.rotation||0)*Math.PI/180);ctx.scale(tr.scale,tr.scale);
     let content=t.content;if(t.motion==='typewriter'){const chars=tr.revealedChars??content.length;content=content.substring(0,chars)+(chars<content.length&&Math.floor(shotTime*5)%2===0?'█':'');}
     const dark=['financial_terminal','cyber_intelligence','blueprint','minimal_cinematic'].includes(style);
     if(t.role==='big_number'){
       ctx.font=`900 ${t.fontSize||130}px "Oswald",Arial,sans-serif`;ctx.fillStyle=t.color||theme.accent;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(content,0,0);
     } else if(t.role==='headline'){
       const fs=t.fontSize||64;ctx.font=`800 ${fs}px "Oswald","Arial Narrow",sans-serif`;ctx.textAlign=Math.abs(t.position.x-50)<5?'center':'left';ctx.textBaseline='alphabetic';
-      const max=style==='minimal_cinematic'?900:560,words=content.split(' ');const lines:string[]=[];let line='';for(const word of words){const test=line?line+' '+word:word;if(ctx.measureText(test).width>max&&line){lines.push(line);line=word;}else line=test;}if(line)lines.push(line);
-      lines.forEach((ln,i)=>{const yy=i*fs*1.1,m=ctx.measureText(ln),xx=ctx.textAlign==='center'?0:0;if(['classic_vox','investigative','newspaper','case_file'].includes(style)){ctx.fillStyle=t.highlightColor||theme.ink;ctx.fillRect((ctx.textAlign==='center'?-m.width/2:0)-12,yy-fs*.85,m.width+24,fs*1.05);ctx.fillStyle=t.highlightColor?'#111':theme.panel;}else{ctx.fillStyle=t.color||(dark?theme.ink:theme.ink);}ctx.fillText(ln,xx,yy);});
+      const max=['minimal_cinematic','photo_essay'].includes(style)?1100:(['modern_editorial','scientific_lab'].includes(style)?820:560),words=content.split(' ');const lines:string[]=[];let line='';for(const word of words){const test=line?line+' '+word:word;if(ctx.measureText(test).width>max&&line){lines.push(line);line=word;}else line=test;}if(line)lines.push(line);
+      lines.forEach((ln,i)=>{const yy=i*fs*1.1,m=ctx.measureText(ln),xx=ctx.textAlign==='center'?0:0;if(['classic_vox','investigative','newspaper','case_file','evidence_board'].includes(style)){ctx.fillStyle=t.highlightColor||theme.ink;ctx.fillRect((ctx.textAlign==='center'?-m.width/2:0)-12,yy-fs*.85,m.width+24,fs*1.05);ctx.fillStyle=t.highlightColor?'#111':theme.panel;}else{ctx.fillStyle=t.color||(dark?theme.ink:theme.ink);}ctx.fillText(ln,xx,yy);});
     } else if(t.role==='date'||t.role==='label'){
       const fs=t.fontSize||30;ctx.font=`700 ${fs}px ${style==='archive_museum'?'Georgia':'monospace'}`;const m=ctx.measureText(content);ctx.fillStyle=t.highlightColor||theme.panel;ctx.fillRect(-8,-fs*.9,m.width+16,fs*1.15);ctx.fillStyle=t.color||theme.ink;ctx.textAlign='left';ctx.fillText(content,0,0);
     } else {ctx.font=`600 ${t.fontSize||34}px sans-serif`;ctx.fillStyle=t.color||theme.ink;ctx.textAlign='left';ctx.fillText(content,0,0);}
     ctx.restore();
   }
+  drawStyleGrammarOverlay(ctx,style,theme,width,height,shotTime);
   drawHeaderOverlay(ctx,shot,theme,width,height,shotTime);
 }
