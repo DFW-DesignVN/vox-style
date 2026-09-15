@@ -131,12 +131,93 @@ async function runTests() {
     assert(fs.existsSync(renderedSilentMp4), `Rendered file not found: ${renderedSilentMp4}`);
   });
 
+  // 5. Scalable Chunked Session Render (supports 15m+ long documentary episodes without OOM)
+  let renderedChunkedMp4 = '';
+  await test('Scalable Render: Chunked Session Streaming + Audio Mux + Strict FFprobe', async () => {
+    // A. Start Session
+    const startRes = await fetch(`${BASE_URL}/api/render/session/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'test_session_doc',
+        fps: 30,
+        voiceUrl: '/outputs/audio/wall_street_demo.mp3',
+        totalFrames: 4,
+      }),
+    });
+    assert.strictEqual(startRes.status, 200);
+    const { sessionId } = await startRes.json();
+    assert(sessionId, 'Session ID must be returned');
+
+    // B. Upload Chunk 1 (Frames 0-1)
+    const chunk1Res = await fetch(`${BASE_URL}/api/render/session/chunk`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionId,
+        startFrameIndex: 0,
+        frames: [DUMMY_JPEG, DUMMY_JPEG],
+      }),
+    });
+    assert.strictEqual(chunk1Res.status, 200);
+
+    // C. Upload Chunk 2 (Frames 2-3)
+    const chunk2Res = await fetch(`${BASE_URL}/api/render/session/chunk`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionId,
+        startFrameIndex: 2,
+        frames: [DUMMY_JPEG, DUMMY_JPEG],
+      }),
+    });
+    assert.strictEqual(chunk2Res.status, 200);
+
+    // D. Finish and transcode with FFmpeg + strict FFprobe
+    const finishRes = await fetch(`${BASE_URL}/api/render/session/finish`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId }),
+    });
+    assert.strictEqual(finishRes.status, 200);
+    const finishData = await finishRes.json();
+    assert.strictEqual(finishData.success, true);
+    assert.strictEqual(finishData.hasAudio, true);
+    assert.strictEqual(finishData.frameCount, 4);
+    assert.strictEqual(finishData.verifiedStreams?.video, 'h264');
+    assert.strictEqual(finishData.verifiedStreams?.audio, 'aac');
+    assert.strictEqual(finishData.verifiedStreams?.strictVerified, true);
+    renderedChunkedMp4 = path.join(process.cwd(), finishData.videoUrl.replace(/^\/+/, ''));
+    assert(fs.existsSync(renderedChunkedMp4), `Rendered session file not found: ${renderedChunkedMp4}`);
+  });
+
+  // 6. Topic → Script → Storyboard Generation Test
+  await test('AI Director: Topic to Script & Storyboard generation (/api/director/storyboard)', async () => {
+    const res = await fetch(`${BASE_URL}/api/director/storyboard`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        topic: 'The Fall of the Roman Empire',
+        duration: 25,
+      }),
+    });
+    assert.strictEqual(res.status, 200);
+    const data = await res.json();
+    assert(data.title, 'Project must have a title');
+    assert(Array.isArray(data.shots) && data.shots.length > 0, 'Project must contain shots');
+    assert(data.shots[0].narration, 'First shot must have narration');
+    assert(data.shots[0].assets.length > 0, 'First shot must have assets');
+  });
+
   // Cleanup test output files
   if (renderedAudioMp4 && fs.existsSync(renderedAudioMp4)) {
     fs.unlinkSync(renderedAudioMp4);
   }
   if (renderedSilentMp4 && fs.existsSync(renderedSilentMp4)) {
     fs.unlinkSync(renderedSilentMp4);
+  }
+  if (renderedChunkedMp4 && fs.existsSync(renderedChunkedMp4)) {
+    fs.unlinkSync(renderedChunkedMp4);
   }
 
   console.log(`\n========================================`);

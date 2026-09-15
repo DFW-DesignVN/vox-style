@@ -64,6 +64,203 @@ app.post('/api/voice/generate',async(req,res)=>{try{const{text,projectId,voiceId
 app.post('/api/timeline/audio-first',async(req,res)=>{try{const{project,voiceDuration}=req.body;if(!project?.shots?.length)return res.status(400).json({error:'project.shots is required'});let duration=Number(voiceDuration);if(!Number.isFinite(duration)||duration<=0)duration=Number(project.voiceDuration);if(!Number.isFinite(duration)||duration<=0)return res.status(400).json({error:'voiceDuration is required'});const normalized=await normalizeProjectToVoiceTimeline(project,duration);const timeline={duration:Number(duration.toFixed(3)),fps:project.fps||30,voiceUrl:project.voiceUrl,beats:normalized.beats,generatedAt:new Date().toISOString()};res.json({success:true,project:{...project,duration:Number(duration.toFixed(3)),shots:normalized.shots,voiceDuration:Number(duration.toFixed(3)),audioTimeline:timeline},timeline});}catch(err:any){res.status(500).json({error:err.message});}});
 app.post('/api/voice-and-timeline',async(req,res)=>{try{const{project,text}=req.body;if(!project?.shots?.length)return res.status(400).json({error:'project.shots is required'});const voiceText=text||project.script||project.shots.map((s:any)=>s.narration).join(' ');const voice=await generateVoice(voiceText,req.body);const normalized=await normalizeProjectToVoiceTimeline(project,voice.duration);const timeline={duration:Number(voice.duration.toFixed(3)),fps:project.fps||30,voiceUrl:voice.url,beats:normalized.beats,generatedAt:new Date().toISOString()};res.json({success:true,voice,project:{...project,duration:Number(voice.duration.toFixed(3)),voiceUrl:voice.url,voiceDuration:Number(voice.duration.toFixed(3)),shots:normalized.shots,audioTimeline:timeline},timeline});}catch(err:any){res.status(500).json({error:err.message});}});
 
+// Render Session State for Scalable Long-Form Video Compositing (15m+ support)
+interface RenderSession {
+  id: string;
+  projectDir: string;
+  fps: number;
+  voiceUrl?: string;
+  totalFrames: number;
+  writtenFrames: number;
+  createdAt: number;
+}
+const renderSessions = new Map<string, RenderSession>();
+
+// Cleanup stale sessions older than 30 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, session] of renderSessions.entries()) {
+    if (now - session.createdAt > 30 * 60 * 1000) {
+      try {
+        fs.rmSync(session.projectDir, { recursive: true, force: true });
+      } catch {}
+      renderSessions.delete(id);
+    }
+  }
+}, 5 * 60 * 1000);
+
+function resolveSafeAudioPath(voiceUrl: string | undefined, projectDir: string): { inputArg: string; codecArg: string; hasAudio: boolean } {
+  if (!voiceUrl || typeof voiceUrl !== 'string') {
+    return { inputArg: '', codecArg: '', hasAudio: false };
+  }
+
+  let resolvedAudioPath: string | null = null;
+  if (voiceUrl.startsWith('data:audio/')) {
+    const ext = voiceUrl.includes('audio/wav') ? 'wav' : 'mp3';
+    const tempVoicePath = path.join(projectDir, `voice_track.${ext}`);
+    const base64Data = voiceUrl.replace(/^data:audio\/\w+;base64,/, '');
+    fs.writeFileSync(tempVoicePath, Buffer.from(base64Data, 'base64'));
+    resolvedAudioPath = tempVoicePath;
+  } else {
+    const cleanPath = voiceUrl.replace(/^\/+/, '');
+    const candidateInCwd = path.resolve(process.cwd(), cleanPath);
+    const safeDirs = [
+      path.resolve(process.cwd(), 'outputs'),
+      path.resolve(process.cwd(), 'public'),
+    ];
+
+    const isContained = (targetPath: string) =>
+      safeDirs.some((dir) => {
+        const rel = path.relative(dir, targetPath);
+        return !rel.startsWith('..') && !path.isAbsolute(rel);
+      });
+
+    if (!isContained(candidateInCwd)) {
+      throw new Error('Security violation: voiceUrl must reside strictly inside outputs/ or public/');
+    }
+
+    if (fs.existsSync(candidateInCwd)) {
+      const realTarget = fs.realpathSync(candidateInCwd);
+      if (!isContained(realTarget)) {
+        throw new Error('Security violation: symlink traversal outside allowed directories detected');
+      }
+      resolvedAudioPath = candidateInCwd;
+    }
+  }
+
+  if (resolvedAudioPath) {
+    return {
+      inputArg: `-i "${resolvedAudioPath}"`,
+      codecArg: `-c:a aac -b:a 192k -af "apad" -shortest`,
+      hasAudio: true,
+    };
+  }
+
+  return { inputArg: '', codecArg: '', hasAudio: false };
+}
+
+async function verifyFinalVideoWithFFprobe(outputMp4Path: string, expectedAudio: boolean) {
+  const probeCmd = `ffprobe -v error -show_entries stream=codec_name,codec_type,duration:format=duration,format_name -of json "${outputMp4Path}"`;
+  const { stdout: probeStdout } = await execAsync(probeCmd);
+  const probeData = JSON.parse(probeStdout || '{}');
+  const streams: Array<{ codec_name: string; codec_type: string; duration?: string }> = Array.isArray(probeData.streams)
+    ? probeData.streams
+    : [];
+
+  const videoStream = streams.find((s) => s.codec_type === 'video');
+  const audioStream = streams.find((s) => s.codec_type === 'audio');
+
+  if (!videoStream) {
+    throw new Error('FFprobe verification failed: Rendered MP4 does not contain a video stream.');
+  }
+  if (videoStream.codec_name !== 'h264') {
+    throw new Error(`FFprobe verification failed: Video codec must be h264, found: ${videoStream.codec_name}`);
+  }
+
+  if (expectedAudio) {
+    if (!audioStream) {
+      throw new Error('FFprobe verification failed: Audio track was specified but rendered MP4 contains no audio stream.');
+    }
+    if (audioStream.codec_name !== 'aac') {
+      throw new Error(`FFprobe verification failed: Audio codec must be aac, found: ${audioStream.codec_name}`);
+    }
+  }
+
+  return {
+    video: videoStream.codec_name,
+    audio: audioStream ? audioStream.codec_name : null,
+    container: probeData.format?.format_name || 'mp4',
+    duration: Number(probeData.format?.duration) || null,
+    strictVerified: true,
+  };
+}
+
+// Session-based chunked streaming render endpoints (prevents OOM on long documentary episodes)
+app.post('/api/render/session/start', async (req, res) => {
+  try {
+    const { projectId, fps = 30, voiceUrl, totalFrames } = req.body;
+    const sessionId = `vox_${projectId || 'doc'}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const projectDir = path.join(TEMP_DIR, sessionId);
+    fs.mkdirSync(projectDir, { recursive: true });
+
+    const session: RenderSession = {
+      id: sessionId,
+      projectDir,
+      fps: Number(fps) || 30,
+      voiceUrl,
+      totalFrames: Number(totalFrames) || 0,
+      writtenFrames: 0,
+      createdAt: Date.now(),
+    };
+
+    renderSessions.set(sessionId, session);
+    res.json({ success: true, sessionId });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/render/session/chunk', async (req, res) => {
+  try {
+    const { sessionId, startFrameIndex = 0, frames } = req.body;
+    const session = renderSessions.get(sessionId);
+    if (!session) {
+      return res.status(404).json({ error: 'Render session not found or expired' });
+    }
+    if (!Array.isArray(frames) || !frames.length) {
+      return res.status(400).json({ error: 'No frames provided in chunk' });
+    }
+
+    for (let i = 0; i < frames.length; i++) {
+      const frameIdx = startFrameIndex + i;
+      const framePath = path.join(session.projectDir, `frame_${String(frameIdx).padStart(5, '0')}.jpg`);
+      const base64Data = String(frames[i]).replace(/^data:image\/\w+;base64,/, '').replace(/\s/g, '');
+      fs.writeFileSync(framePath, Buffer.from(base64Data, 'base64'));
+    }
+
+    session.writtenFrames += frames.length;
+    res.json({ success: true, writtenFrames: session.writtenFrames });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/render/session/finish', async (req, res) => {
+  try {
+    const { sessionId } = req.body;
+    const session = renderSessions.get(sessionId);
+    if (!session) {
+      return res.status(404).json({ error: 'Render session not found or expired' });
+    }
+
+    const outputMp4Path = path.join(OUTPUTS_DIR, `${session.id}.mp4`);
+    const { inputArg, codecArg, hasAudio } = resolveSafeAudioPath(session.voiceUrl, session.projectDir);
+
+    const ffmpegCmd = inputArg
+      ? `ffmpeg -y -framerate ${session.fps} -i "${session.projectDir}/frame_%05d.jpg" ${inputArg} -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,format=yuv420p" -c:v libx264 -pix_fmt yuv420p -r ${session.fps} ${codecArg} -preset fast -crf 20 "${outputMp4Path}"`
+      : `ffmpeg -y -framerate ${session.fps} -i "${session.projectDir}/frame_%05d.jpg" -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,format=yuv420p" -c:v libx264 -pix_fmt yuv420p -r ${session.fps} -preset fast -crf 20 "${outputMp4Path}"`;
+
+    await execAsync(ffmpegCmd);
+    fs.rmSync(session.projectDir, { recursive: true, force: true });
+    renderSessions.delete(sessionId);
+
+    const verifiedStreams = await verifyFinalVideoWithFFprobe(outputMp4Path, hasAudio);
+
+    res.json({
+      success: true,
+      videoUrl: `/outputs/${session.id}.mp4`,
+      renderId: session.id,
+      frameCount: session.writtenFrames,
+      fps: session.fps,
+      hasAudio,
+      verifiedStreams,
+    });
+  } catch (err: any) {
+    const isSecurity = err?.message && err.message.includes('Security violation');
+    res.status(isSecurity ? 400 : 500).json({ error: err.message });
+  }
+});
+
 app.post('/api/render-final-video', async (req, res) => {
   try {
     const { projectId, shotFrames, fps = 30, voiceUrl } = req.body;
@@ -82,89 +279,16 @@ app.post('/api/render-final-video', async (req, res) => {
     }
 
     const outputMp4Path = path.join(OUTPUTS_DIR, `${renderId}.mp4`);
+    const { inputArg, codecArg, hasAudio } = resolveSafeAudioPath(voiceUrl, projectDir);
 
-    // Handle voice narration audio track with strict path security
-    let audioInputArg = '';
-    let audioCodecArg = '';
-    let hasAudio = false;
-
-    if (voiceUrl && typeof voiceUrl === 'string') {
-      let resolvedAudioPath: string | null = null;
-      if (voiceUrl.startsWith('data:audio/')) {
-        const ext = voiceUrl.includes('audio/wav') ? 'wav' : 'mp3';
-        const tempVoicePath = path.join(projectDir, `voice_track.${ext}`);
-        const base64Data = voiceUrl.replace(/^data:audio\/\w+;base64,/, '');
-        fs.writeFileSync(tempVoicePath, Buffer.from(base64Data, 'base64'));
-        resolvedAudioPath = tempVoicePath;
-      } else {
-        const cleanPath = voiceUrl.replace(/^\/+/, '');
-        const candidateInCwd = path.resolve(process.cwd(), cleanPath);
-        const safeDirs = [
-          path.resolve(process.cwd(), 'outputs'),
-          path.resolve(process.cwd(), 'public'),
-        ];
-
-        const isContained = (targetPath: string) =>
-          safeDirs.some((dir) => {
-            const rel = path.relative(dir, targetPath);
-            return !rel.startsWith('..') && !path.isAbsolute(rel);
-          });
-
-        // Security check: strict path containment (cannot match outputs_evil or traverse)
-        if (!isContained(candidateInCwd)) {
-          return res.status(400).json({ error: 'Security violation: voiceUrl must reside strictly inside outputs/ or public/' });
-        }
-
-        if (fs.existsSync(candidateInCwd)) {
-          // Prevent symlink traversal out of safe directories
-          const realTarget = fs.realpathSync(candidateInCwd);
-          if (!isContained(realTarget)) {
-            return res.status(400).json({ error: 'Security violation: symlink traversal outside allowed directories detected' });
-          }
-          resolvedAudioPath = candidateInCwd;
-        }
-      }
-
-      if (resolvedAudioPath) {
-        audioInputArg = `-i "${resolvedAudioPath}"`;
-        audioCodecArg = `-c:a aac -b:a 192k -af "apad" -shortest`;
-        hasAudio = true;
-      }
-    }
-
-    const ffmpegCmd = audioInputArg
-      ? `ffmpeg -y -framerate ${Number(fps) || 30} -i "${projectDir}/frame_%05d.jpg" ${audioInputArg} -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,format=yuv420p" -c:v libx264 -pix_fmt yuv420p -r ${Number(fps) || 30} ${audioCodecArg} -preset fast -crf 20 "${outputMp4Path}"`
+    const ffmpegCmd = inputArg
+      ? `ffmpeg -y -framerate ${Number(fps) || 30} -i "${projectDir}/frame_%05d.jpg" ${inputArg} -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,format=yuv420p" -c:v libx264 -pix_fmt yuv420p -r ${Number(fps) || 30} ${codecArg} -preset fast -crf 20 "${outputMp4Path}"`
       : `ffmpeg -y -framerate ${Number(fps) || 30} -i "${projectDir}/frame_%05d.jpg" -vf "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,format=yuv420p" -c:v libx264 -pix_fmt yuv420p -r ${Number(fps) || 30} -preset fast -crf 20 "${outputMp4Path}"`;
 
     await execAsync(ffmpegCmd);
     fs.rmSync(projectDir, { recursive: true, force: true });
 
-    // Rigorous FFprobe verification of output MP4 (codecs, streams, container)
-    const probeCmd = `ffprobe -v error -show_entries stream=codec_name,codec_type,duration:format=duration,format_name -of json "${outputMp4Path}"`;
-    const { stdout: probeStdout } = await execAsync(probeCmd);
-    const probeData = JSON.parse(probeStdout || '{}');
-    const streams: Array<{ codec_name: string; codec_type: string; duration?: string }> = Array.isArray(probeData.streams)
-      ? probeData.streams
-      : [];
-
-    const videoStream = streams.find((s) => s.codec_type === 'video');
-    const audioStream = streams.find((s) => s.codec_type === 'audio');
-
-    if (!videoStream) {
-      throw new Error('FFprobe verification failed: Rendered MP4 does not contain a video stream.');
-    }
-    if (videoStream.codec_name !== 'h264') {
-      throw new Error(`FFprobe verification failed: Video codec must be h264, found: ${videoStream.codec_name}`);
-    }
-
-    if (hasAudio) {
-      if (!audioStream) {
-        throw new Error('FFprobe verification failed: Audio track was specified but rendered MP4 contains no audio stream.');
-      }
-      if (audioStream.codec_name !== 'aac') {
-        throw new Error(`FFprobe verification failed: Audio codec must be aac, found: ${audioStream.codec_name}`);
-      }
-    }
+    const verifiedStreams = await verifyFinalVideoWithFFprobe(outputMp4Path, hasAudio);
 
     res.json({
       success: true,
@@ -172,17 +296,12 @@ app.post('/api/render-final-video', async (req, res) => {
       renderId,
       frameCount: shotFrames.length,
       fps: Number(fps) || 30,
-      hasAudio: Boolean(audioStream),
-      verifiedStreams: {
-        video: videoStream.codec_name,
-        audio: audioStream ? audioStream.codec_name : null,
-        container: probeData.format?.format_name || 'mp4',
-        duration: Number(probeData.format?.duration) || null,
-        strictVerified: true,
-      },
+      hasAudio,
+      verifiedStreams,
     });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    const isSecurity = err?.message && err.message.includes('Security violation');
+    res.status(isSecurity ? 400 : 500).json({ error: err.message });
   }
 });
 

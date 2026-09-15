@@ -48,56 +48,90 @@ export const RenderModal: React.FC<RenderModalProps> = ({
         await preloadShotImages(s);
       }
 
-      // 2. Offscreen rendering of frames
+      // 2. Offscreen rendering of frames with Chunked Streaming (scales to 15m+ episodes without OOM)
       const fps = renderFps;
-      setStatusMessage(`Compositing paper collage frames at 1920x1080 (${fps} FPS)...`);
+      const totalFrames = Math.max(1, Math.round(project.duration * fps));
+      setStatusMessage(`Initializing render session (${totalFrames} frames @ ${fps} FPS)...`);
+
+      // A. Start Session
+      const startRes = await fetch('/api/render/session/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: project.project_id,
+          fps,
+          voiceUrl: project.voiceUrl,
+          totalFrames,
+        }),
+      });
+
+      if (!startRes.ok) {
+        throw new Error('Failed to initialize video render session');
+      }
+
+      const { sessionId } = await startRes.json();
+
       const offCanvas = document.createElement('canvas');
       offCanvas.width = 1920;
       offCanvas.height = 1080;
       const ctx = offCanvas.getContext('2d');
       if (!ctx) throw new Error('Could not initialize canvas context');
 
-      const frameList: string[] = [];
-      const totalFrames = Math.max(1, Math.round(project.duration * fps));
+      const CHUNK_SIZE = 25;
+      let chunkBuffer: string[] = [];
       let completedFrames = 0;
+      let chunkStartIndex = 0;
 
       for (const shot of project.shots) {
         const totalFramesInShot = Math.max(1, Math.round(shot.duration * fps));
         for (let f = 0; f < totalFramesInShot; f++) {
           const t = f / fps;
           renderShotFrame(ctx, shot, t, 1920, 1080);
-          frameList.push(offCanvas.toDataURL('image/jpeg', 0.82));
+          chunkBuffer.push(offCanvas.toDataURL('image/jpeg', 0.82));
           completedFrames++;
 
-          if (completedFrames % 10 === 0) {
-            const pct = Math.min(65, Math.floor((completedFrames / totalFrames) * 65));
+          // When chunk buffer is full or last frame, stream to server
+          if (chunkBuffer.length >= CHUNK_SIZE || completedFrames === totalFrames) {
+            const uploadRes = await fetch('/api/render/session/chunk', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                sessionId,
+                startFrameIndex: chunkStartIndex,
+                frames: chunkBuffer,
+              }),
+            });
+
+            if (!uploadRes.ok) {
+              throw new Error(`Failed to upload frame chunk at index ${chunkStartIndex}`);
+            }
+
+            chunkStartIndex = completedFrames;
+            chunkBuffer = []; // Release chunk memory immediately
+
+            const pct = Math.min(80, Math.floor((completedFrames / totalFrames) * 80));
             setProgress(pct);
-            setStatusMessage(`Compositing shot ${shot.order}/${project.shots.length} (frame ${completedFrames}/${totalFrames} @ ${fps}fps)...`);
+            setStatusMessage(`Compositing & streaming frame ${completedFrames}/${totalFrames} (Shot ${shot.order}/${project.shots.length})...`);
           }
         }
       }
 
-      setProgress(68);
-      setStatusMessage(`Transmitting ${frameList.length} frames to FFmpeg backend engine...`);
+      setProgress(85);
+      setStatusMessage('Transcoding 1080p MP4 with FFmpeg H.264 & muxing AAC narration...');
 
-      // 3. Send to Server FFmpeg with frames and voice audio track
-      const response = await fetch('/api/render-final-video', {
+      // B. Finish and Encode
+      const finishRes = await fetch('/api/render/session/finish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: project.project_id,
-          shotFrames: frameList,
-          fps,
-          voiceUrl: project.voiceUrl,
-        }),
+        body: JSON.stringify({ sessionId }),
       });
 
-      if (!response.ok) {
-        const errJson = await response.json().catch(() => ({}));
-        throw new Error(errJson.error || `Server responded with status ${response.status}`);
+      if (!finishRes.ok) {
+        const errJson = await finishRes.json().catch(() => ({}));
+        throw new Error(errJson.error || `Server responded with status ${finishRes.status}`);
       }
 
-      const resData = await response.json();
+      const resData = await finishRes.json();
       setProgress(100);
       setVerifiedStreams(resData.verifiedStreams || null);
       setStatusMessage(
