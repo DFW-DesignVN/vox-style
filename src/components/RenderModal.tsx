@@ -82,6 +82,12 @@ export const RenderModal: React.FC<RenderModalProps> = ({
       let completedFrames = 0;
       let chunkStartIndex = 0;
 
+      // Preload all project assets prior to headless compositing
+      setStatusMessage('Preloading and decoding archival media assets...');
+      for (const shot of project.shots) {
+        await preloadShotImages(shot);
+      }
+
       for (const shot of project.shots) {
         const totalFramesInShot = Math.max(1, Math.round(shot.duration * fps));
         for (let f = 0; f < totalFramesInShot; f++) {

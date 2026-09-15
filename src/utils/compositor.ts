@@ -8,40 +8,18 @@ import {
   drawRedString,
   drawRedMarkerArrow,
 } from './paperAssets.ts';
+import { getCachedImage, getOrLoadDecodedImage, getHalftonePatternCanvas } from './assetCache.ts';
 
-// Cached Image elements for smooth rendering
-const imageCache = new Map<string, HTMLImageElement>();
-
-export function getCachedImage(src: string): HTMLImageElement | null {
-  if (!src) return null;
-  if (imageCache.has(src)) {
-    const img = imageCache.get(src)!;
-    return img.complete ? img : null;
-  }
-  const img = new Image();
-  img.crossOrigin = 'anonymous';
-  img.src = src;
-  imageCache.set(src, img);
-  return null;
-}
+export { getCachedImage };
 
 /**
- * Preload all image assets for a given shot or project
+ * Preload all image assets for a given shot or project using decode()
  */
 export async function preloadShotImages(shot: Shot): Promise<void> {
-  const promises: Promise<void>[] = [];
+  const promises: Promise<any>[] = [];
   for (const asset of shot.assets) {
-    if (asset.source && !imageCache.has(asset.source)) {
-      promises.push(
-        new Promise((resolve) => {
-          const img = new Image();
-          img.crossOrigin = 'anonymous';
-          img.onload = () => resolve();
-          img.onerror = () => resolve();
-          img.src = asset.source;
-          imageCache.set(asset.source, img);
-        })
-      );
+    if (asset.source) {
+      promises.push(getOrLoadDecodedImage(asset.source));
     }
   }
   await Promise.all(promises);
@@ -140,15 +118,9 @@ export function renderShotFrame(
 
       ctx.drawImage(img, offX, offY, drawW, drawH);
 
-      // Halftone dot simulation overlay
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.06)';
-      for (let y = -halfH + photoPad; y < halfH - photoPad; y += 4) {
-        for (let x = -halfW + photoPad; x < halfW - photoPad; x += 4) {
-          if ((x + y) % 6 === 0) {
-            ctx.fillRect(x, y, 2, 2);
-          }
-        }
-      }
+      // Pre-baked Halftone dot simulation overlay (fast single draw call)
+      const halftoneCanvas = getHalftonePatternCanvas(photoW, photoH);
+      ctx.drawImage(halftoneCanvas, -halfW + photoPad, -halfH + photoPad);
 
       ctx.restore();
     } else {

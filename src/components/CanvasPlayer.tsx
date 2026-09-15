@@ -10,9 +10,13 @@ import {
   Activity,
   Sparkles,
   Mic,
+  Gauge,
 } from 'lucide-react';
 import { Project, Shot, Beat } from '../types.ts';
 import { renderShotFrame, preloadShotImages } from '../utils/compositor.ts';
+import { getAssetCacheStats } from '../utils/assetCache.ts';
+
+export type PreviewQualityMode = 'performance' | 'balanced' | 'full';
 
 interface CanvasPlayerProps {
   project: Project;
@@ -29,28 +33,68 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
+  // Playback state
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1.0);
   const [showSafeArea, setShowSafeArea] = useState<boolean>(false);
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<'shot' | 'timeline' | 'contact_sheet'>('shot');
-  const [previewQuality, setPreviewQuality] = useState<'draft' | 'full'>('draft');
-  const [currentTime, setCurrentTime] = useState<number>(0); // Seconds within current shot or project
+  const [previewQuality, setPreviewQuality] = useState<PreviewQualityMode>('balanced');
+  const [showPerfMonitor, setShowPerfMonitor] = useState<boolean>(false);
+
+  // High-frequency playback timing in REFS (bypasses React 60fps re-render overhead)
+  const currentTimeRef = useRef<number>(0);
+  const [displayTime, setDisplayTime] = useState<number>(0); // Throttled for UI slider/counter (12Hz)
+
+  // Real Performance Monitor Metrics
+  const [perfStats, setPerfStats] = useState({
+    fps: 30,
+    frameTimeMs: 16.6,
+    renderTimeMs: 4.2,
+    droppedFrames: 0,
+    assetsTracked: 0,
+    assetsReady: 0,
+  });
+
+  const perfDataRef = useRef({
+    lastFrameTime: performance.now(),
+    frameCount: 0,
+    fpsCalcTime: performance.now(),
+    fps: 30,
+    frameTimeMs: 16.6,
+    renderTimeMs: 4.2,
+    droppedFrames: 0,
+    targetFrameInterval: 1000 / 24, // Balanced: 24fps
+  });
+
   const animationFrameRef = useRef<number | null>(null);
-  const lastTimestampRef = useRef<number | null>(null);
+  const isPlayingRef = useRef<boolean>(false);
+  const playbackSpeedRef = useRef<number>(1.0);
+  const viewModeRef = useRef<'shot' | 'timeline' | 'contact_sheet'>('shot');
+  const previewQualityRef = useRef<PreviewQualityMode>('balanced');
+  const projectRef = useRef<Project>(project);
+  const activeShotIndexRef = useRef<number>(activeShotIndex);
+
+  // Keep refs in sync with props/state
+  useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
+  useEffect(() => { playbackSpeedRef.current = playbackSpeed; }, [playbackSpeed]);
+  useEffect(() => { viewModeRef.current = viewMode; }, [viewMode]);
+  useEffect(() => { previewQualityRef.current = previewQuality; }, [previewQuality]);
+  useEffect(() => { projectRef.current = project; }, [project]);
+  useEffect(() => { activeShotIndexRef.current = activeShotIndex; }, [activeShotIndex]);
+
+  // Target FPS and resolution per mode
+  useEffect(() => {
+    if (previewQuality === 'performance') {
+      perfDataRef.current.targetFrameInterval = 1000 / 15;
+    } else if (previewQuality === 'balanced') {
+      perfDataRef.current.targetFrameInterval = 1000 / 24;
+    } else {
+      perfDataRef.current.targetFrameInterval = 1000 / 30;
+    }
+  }, [previewQuality]);
 
   const activeShot: Shot = project.shots[activeShotIndex] || project.shots[0];
-
-  // Global time for beat matching
-  const globalTime =
-    viewMode === 'shot'
-      ? (activeShot?.start || 0) + currentTime
-      : currentTime;
-
-  const allBeats: Beat[] = project.audioTimeline?.beats || [];
-  const activeBeat = allBeats.find(
-    (b) => globalTime >= b.start && globalTime < b.end
-  ) || null;
 
   // Preload image assets on shot change
   useEffect(() => {
@@ -59,127 +103,190 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
     }
   }, [activeShot]);
 
-  // Sync audio play/pause and rate
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio || !project.voiceUrl) return;
+  // Global time calculation for beat detection
+  const globalTime =
+    viewMode === 'shot'
+      ? (activeShot?.start || 0) + displayTime
+      : displayTime;
 
-    if (isPlaying) {
-      const targetTime = globalTime;
-      if (Math.abs(audio.currentTime - targetTime) > 0.25) {
-        audio.currentTime = Math.min(targetTime, audio.duration || targetTime);
-      }
-      audio.playbackRate = playbackSpeed;
-      audio.play().catch(() => {});
-    } else {
-      audio.pause();
-    }
-  }, [isPlaying, project.voiceUrl, globalTime, playbackSpeed]);
+  const allBeats: Beat[] = project.audioTimeline?.beats || [];
+  const activeBeat = allBeats.find(
+    (b) => globalTime >= b.start && globalTime < b.end
+  ) || null;
 
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (audio) {
-      audio.playbackRate = playbackSpeed;
-    }
-  }, [playbackSpeed]);
-
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (audio) {
-      audio.muted = isMuted;
-    }
-  }, [isMuted]);
-
-  // Main rendering loop for active shot
-  const renderCurrent = useCallback(() => {
+  // Single Frame Draw Procedure
+  const drawFrame = useCallback((time: number) => {
     const canvas = canvasRef.current;
-    if (!canvas || !activeShot) return;
+    if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const renderW = previewQuality === 'draft' ? 960 : 1920;
-    const renderH = previewQuality === 'draft' ? 540 : 1080;
+    const quality = previewQualityRef.current;
+    let renderW = 960;
+    let renderH = 540;
+    if (quality === 'performance') {
+      renderW = 640;
+      renderH = 360;
+    } else if (quality === 'full') {
+      renderW = 1920;
+      renderH = 1080;
+    }
 
     if (canvas.width !== renderW || canvas.height !== renderH) {
       canvas.width = renderW;
       canvas.height = renderH;
     }
 
-    if (viewMode === 'contact_sheet') {
-      renderContactSheet(ctx, project);
+    const mode = viewModeRef.current;
+    const proj = projectRef.current;
+    const currentShot = proj.shots[activeShotIndexRef.current] || proj.shots[0];
+
+    if (mode === 'contact_sheet') {
+      renderContactSheet(ctx, proj);
       return;
     }
 
-    if (viewMode === 'shot') {
-      renderShotFrame(ctx, activeShot, currentTime, renderW, renderH);
+    if (mode === 'shot') {
+      renderShotFrame(ctx, currentShot, time, renderW, renderH);
     } else {
-      // Timeline continuous mode
       let accumulated = 0;
-      let targetShot = project.shots[0];
+      let targetShot = proj.shots[0];
       let shotTime = 0;
 
-      for (const s of project.shots) {
-        if (currentTime >= accumulated && currentTime < accumulated + s.duration) {
+      for (const s of proj.shots) {
+        if (time >= accumulated && time < accumulated + s.duration) {
           targetShot = s;
-          shotTime = currentTime - accumulated;
+          shotTime = time - accumulated;
           break;
         }
         accumulated += s.duration;
       }
-      if (currentTime >= accumulated && project.shots.length > 0) {
-        targetShot = project.shots[project.shots.length - 1];
+      if (time >= accumulated && proj.shots.length > 0) {
+        targetShot = proj.shots[proj.shots.length - 1];
         shotTime = targetShot.duration;
       }
 
       renderShotFrame(ctx, targetShot, shotTime, renderW, renderH);
     }
 
-    // Draw Title Safe Area Guide (90% margins) if enabled
     if (showSafeArea) {
       ctx.save();
       ctx.strokeStyle = 'rgba(239, 68, 68, 0.4)';
       ctx.lineWidth = 2;
       ctx.setLineDash([8, 6]);
-      // 90% safe action
       ctx.strokeRect(renderW * 0.05, renderH * 0.05, renderW * 0.9, renderH * 0.9);
-      // 80% safe title
       ctx.strokeStyle = 'rgba(234, 179, 8, 0.4)';
       ctx.strokeRect(renderW * 0.1, renderH * 0.1, renderW * 0.8, renderH * 0.8);
       ctx.restore();
     }
-  }, [activeShot, currentTime, previewQuality, project, showSafeArea, viewMode]);
+  }, [showSafeArea]);
 
-  // Frame tick
+  // Imperative Single Playback Loop (Master Animation Loop)
   useEffect(() => {
     if (!isPlaying) {
-      renderCurrent();
+      drawFrame(currentTimeRef.current);
       return;
     }
 
+    const audio = audioRef.current;
+    const hasAudio = !!(project.voiceUrl && audio);
+    let lastUiUpdateTime = performance.now();
+    let lastRenderTimestamp = performance.now();
+
     const maxDuration =
-      viewMode === 'shot'
-        ? activeShot?.duration || 4.5
+      viewModeRef.current === 'shot'
+        ? (project.shots[activeShotIndexRef.current]?.duration || 4.5)
         : project.shots.reduce((acc, s) => acc + s.duration, 0);
 
-    const tick = (timestamp: number) => {
-      if (!lastTimestampRef.current) {
-        lastTimestampRef.current = timestamp;
+    // If audio is available, sync and play
+    if (hasAudio) {
+      const gTime =
+        viewModeRef.current === 'shot'
+          ? (project.shots[activeShotIndexRef.current]?.start || 0) + currentTimeRef.current
+          : currentTimeRef.current;
+      if (Math.abs(audio.currentTime - gTime) > 0.2) {
+        audio.currentTime = Math.min(gTime, audio.duration || gTime);
       }
-      const delta = (timestamp - lastTimestampRef.current) / 1000;
-      lastTimestampRef.current = timestamp;
+      audio.playbackRate = playbackSpeedRef.current;
+      audio.muted = isMuted;
+      audio.play().catch(() => {});
+    }
 
-      setCurrentTime((prev) => {
-        const next = prev + delta * playbackSpeed;
-        if (next >= maxDuration) {
-          setIsPlaying(false);
-          lastTimestampRef.current = null;
-          if (audioRef.current) audioRef.current.pause();
-          return maxDuration;
+    const tick = (timestamp: number) => {
+      if (!isPlayingRef.current) return;
+
+      const pData = perfDataRef.current;
+      const elapsedSinceLastRender = timestamp - lastRenderTimestamp;
+
+      // Throttle render if in Performance (15fps) or Balanced (24fps) mode
+      if (elapsedSinceLastRender >= pData.targetFrameInterval - 1.5) {
+        lastRenderTimestamp = timestamp;
+
+        // Calculate current time: use audio clock if audio is active, else delta time
+        let nextTime = currentTimeRef.current;
+        if (hasAudio && !audio.paused && audio.duration > 0) {
+          const audioCurrent = audio.currentTime;
+          if (viewModeRef.current === 'shot') {
+            const shotStart = project.shots[activeShotIndexRef.current]?.start || 0;
+            nextTime = Math.max(0, audioCurrent - shotStart);
+          } else {
+            nextTime = audioCurrent;
+          }
+        } else {
+          const delta = elapsedSinceLastRender / 1000;
+          nextTime += delta * playbackSpeedRef.current;
         }
-        return next;
-      });
 
-      renderCurrent();
+        currentTimeRef.current = nextTime;
+
+        // Stop condition
+        if (nextTime >= maxDuration) {
+          setIsPlaying(false);
+          currentTimeRef.current = maxDuration;
+          setDisplayTime(maxDuration);
+          drawFrame(maxDuration);
+          if (hasAudio) audio.pause();
+          return;
+        }
+
+        // Draw canvas frame
+        const renderStart = performance.now();
+        drawFrame(nextTime);
+        const renderDuration = performance.now() - renderStart;
+
+        // Performance metrics
+        pData.frameCount++;
+        pData.frameTimeMs = timestamp - pData.lastFrameTime;
+        pData.renderTimeMs = renderDuration;
+        if (pData.frameTimeMs > pData.targetFrameInterval * 1.5) {
+          pData.droppedFrames++;
+        }
+        pData.lastFrameTime = timestamp;
+
+        // Calculate FPS every 500ms
+        if (timestamp - pData.fpsCalcTime >= 500) {
+          pData.fps = Math.round((pData.frameCount * 1000) / (timestamp - pData.fpsCalcTime));
+          pData.frameCount = 0;
+          pData.fpsCalcTime = timestamp;
+
+          const stats = getAssetCacheStats();
+          setPerfStats({
+            fps: pData.fps,
+            frameTimeMs: Number(pData.frameTimeMs.toFixed(1)),
+            renderTimeMs: Number(pData.renderTimeMs.toFixed(1)),
+            droppedFrames: pData.droppedFrames,
+            assetsTracked: stats.totalTracked,
+            assetsReady: stats.readyCount,
+          });
+        }
+
+        // Update UI React state at low frequency (12Hz ~ 80ms)
+        if (timestamp - lastUiUpdateTime >= 80) {
+          lastUiUpdateTime = timestamp;
+          setDisplayTime(Number(nextTime.toFixed(2)));
+        }
+      }
+
       animationFrameRef.current = requestAnimationFrame(tick);
     };
 
@@ -189,14 +296,14 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
       }
-      lastTimestampRef.current = null;
+      if (hasAudio) audio.pause();
     };
-  }, [isPlaying, playbackSpeed, viewMode, activeShot, project, renderCurrent]);
+  }, [isPlaying, isMuted, drawFrame, project.voiceUrl, project.shots]);
 
   // Re-render when dependencies change
   useEffect(() => {
-    renderCurrent();
-  }, [renderCurrent]);
+    drawFrame(currentTimeRef.current);
+  }, [drawFrame, previewQuality, activeShotIndex]);
 
   const maxDuration =
     viewMode === 'shot'
@@ -204,23 +311,25 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
       : project.shots.reduce((acc, s) => acc + s.duration, 0);
 
   const handleSeek = (newTime: number) => {
-    setCurrentTime(newTime);
+    currentTimeRef.current = newTime;
+    setDisplayTime(newTime);
     if (audioRef.current && project.voiceUrl) {
       const gTime = viewMode === 'shot' ? (activeShot?.start || 0) + newTime : newTime;
       audioRef.current.currentTime = gTime;
     }
-    renderCurrent();
+    drawFrame(newTime);
   };
 
   const handleReset = () => {
     setIsPlaying(false);
-    setCurrentTime(0);
+    currentTimeRef.current = 0;
+    setDisplayTime(0);
     if (audioRef.current && project.voiceUrl) {
       const gTime = viewMode === 'shot' ? (activeShot?.start || 0) : 0;
       audioRef.current.currentTime = gTime;
       audioRef.current.pause();
     }
-    renderCurrent();
+    drawFrame(0);
   };
 
   const handleBeatJump = (beat: Beat) => {
@@ -236,7 +345,6 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
     }
   };
 
-  // Render Section 29 Contact Sheet
   function renderContactSheet(ctx: CanvasRenderingContext2D, proj: Project) {
     ctx.clearRect(0, 0, 1920, 1080);
     ctx.fillStyle = '#121214';
@@ -248,110 +356,174 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
 
     const shots = proj.shots;
     const cols = 3;
-    const rows = 2;
-    const marginX = 60;
-    const marginY = 90;
-    const gapX = 30;
-    const gapY = 30;
-
-    const cellW = (1920 - marginX * 2 - gapX * (cols - 1)) / cols;
-    const cellH = (1080 - marginY - 60 - gapY * (rows - 1)) / rows;
+    const cellW = 540;
+    const cellH = 304;
+    const startX = 60;
+    const startY = 100;
+    const gapX = 40;
+    const gapY = 40;
 
     shots.slice(0, 6).forEach((s, idx) => {
-      const c = idx % cols;
-      const r = Math.floor(idx / cols);
-      const x = marginX + c * (cellW + gapX);
-      const y = marginY + r * (cellH + gapY);
+      const col = idx % cols;
+      const row = Math.floor(idx / cols);
+      const x = startX + col * (cellW + gapX);
+      const y = startY + row * (cellH + gapY);
 
-      const offCanvas = document.createElement('canvas');
-      offCanvas.width = 1920;
-      offCanvas.height = 1080;
-      const offCtx = offCanvas.getContext('2d');
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.fillStyle = '#18181B';
+      ctx.fillRect(0, 0, cellW, cellH);
+
+      const off = document.createElement('canvas');
+      off.width = 1920;
+      off.height = 1080;
+      const offCtx = off.getContext('2d');
       if (offCtx) {
-        renderShotFrame(offCtx, s, Math.min(s.duration, 2.5), 1920, 1080);
-        ctx.drawImage(offCanvas, x, y, cellW, cellH);
+        renderShotFrame(offCtx, s, s.duration * 0.4, 1920, 1080);
+        ctx.drawImage(off, 0, 0, cellW, cellH);
       }
 
-      ctx.strokeStyle = idx === activeShotIndex ? '#DC2626' : 'rgba(255,255,255,0.2)';
-      ctx.lineWidth = idx === activeShotIndex ? 4 : 1.5;
-      ctx.strokeRect(x, y, cellW, cellH);
+      ctx.strokeStyle = '#3F3F46';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(0, 0, cellW, cellH);
 
-      ctx.fillStyle = 'rgba(10,10,10,0.85)';
-      ctx.fillRect(x + 10, y + 10, 190, 36);
+      ctx.fillStyle = 'rgba(0,0,0,0.75)';
+      ctx.fillRect(0, cellH - 32, cellW, 32);
       ctx.fillStyle = '#F4EEDA';
-      ctx.font = 'bold 16px "Courier Prime", monospace';
-      ctx.fillText(`SHOT 0${s.order} • ${s.layout}`, x + 18, y + 34);
+      ctx.font = '13px "Courier Prime", monospace';
+      ctx.fillText(`SHOT 0${s.order} • ${s.layout.toUpperCase()} • ${s.duration}s`, 12, cellH - 11);
+
+      ctx.restore();
     });
   }
 
-  // Filter beats visible in current view
-  const visibleBeats =
-    viewMode === 'shot'
-      ? allBeats.filter((b) => b.shotId === activeShot?.shot_id)
-      : allBeats;
-
   return (
     <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden shadow-2xl flex flex-col">
-      {/* Hidden native audio element for synchronization */}
+      {/* Hidden Audio Element for Master Sync */}
       {project.voiceUrl && (
         <audio
           ref={audioRef}
           src={project.voiceUrl}
           preload="auto"
-          onEnded={() => setIsPlaying(false)}
+          onEnded={() => {
+            if (isPlaying) setIsPlaying(false);
+          }}
         />
       )}
 
-      {/* Top Bar with Mode Controls */}
+      {/* Player Header Bar with 3-tier Quality Mode & Perf Monitor */}
       <div className="bg-zinc-950 px-4 py-2.5 border-b border-zinc-800 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
         <div className="flex items-center gap-2">
           <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-          <span className="font-bold text-zinc-200">
+          <span className="font-bold text-zinc-200 uppercase tracking-wider">
             {viewMode === 'shot'
-              ? `PREVIEW: SHOT ${String(activeShotIndex + 1).padStart(2, '0')} (${activeShot?.layout.toUpperCase()})`
+              ? `Shot 0${activeShot?.order || 1}: ${activeShot?.layout || 'Archive'}`
               : viewMode === 'timeline'
-              ? `FULL CONTINUOUS TIMELINE (${project.duration}s)`
-              : 'CONTACT SHEET (VISUAL CONSISTENCY CHECK)'}
+              ? `Full Sequence (${project.shots.length} Shots • ${project.duration}s)`
+              : 'Contact Sheet Inspection'}
           </span>
-          {project.voiceUrl && (
-            <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-950/80 border border-amber-800/80 text-[10px] text-amber-300">
-              <Mic className="w-2.5 h-2.5" />
-              <span>Voice Track</span>
-            </span>
-          )}
+          <span className="text-zinc-500">|</span>
+          <span className="text-zinc-400">
+            {displayTime.toFixed(2)}s / {maxDuration.toFixed(2)}s
+          </span>
         </div>
 
-        {/* View Mode Switcher */}
-        <div className="flex items-center gap-1.5 bg-zinc-900 p-1 rounded-lg border border-zinc-800">
-          <button
-            onClick={() => setViewMode('shot')}
-            className={`px-3 py-1 rounded transition ${
-              viewMode === 'shot' ? 'bg-zinc-700 text-amber-300 font-semibold' : 'text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            Single Shot
-          </button>
-          <button
-            onClick={() => setViewMode('timeline')}
-            className={`px-3 py-1 rounded transition ${
-              viewMode === 'timeline' ? 'bg-zinc-700 text-amber-300 font-semibold' : 'text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            Timeline
-          </button>
-          <button
-            onClick={() => setViewMode('contact_sheet')}
-            className={`flex items-center gap-1 px-3 py-1 rounded transition ${
-              viewMode === 'contact_sheet' ? 'bg-zinc-700 text-amber-300 font-semibold' : 'text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            <Grid className="w-3 h-3" />
-            <span>Contact Sheet</span>
-          </button>
-        </div>
-
-        {/* Audio Mute, Safe Area & Speed */}
+        {/* View mode toggle, Quality selector, Debug Monitor */}
         <div className="flex items-center gap-2">
+          {/* View Mode Buttons */}
+          <div className="flex items-center bg-zinc-900 p-0.5 rounded border border-zinc-800">
+            <button
+              onClick={() => {
+                setViewMode('shot');
+                currentTimeRef.current = 0;
+                setDisplayTime(0);
+              }}
+              className={`px-2 py-0.5 rounded text-[11px] transition ${
+                viewMode === 'shot'
+                  ? 'bg-zinc-800 text-amber-300 font-bold'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              Shot
+            </button>
+            <button
+              onClick={() => {
+                setViewMode('timeline');
+                currentTimeRef.current = 0;
+                setDisplayTime(0);
+              }}
+              className={`px-2 py-0.5 rounded text-[11px] transition ${
+                viewMode === 'timeline'
+                  ? 'bg-zinc-800 text-amber-300 font-bold'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              Sequence
+            </button>
+            <button
+              onClick={() => setViewMode('contact_sheet')}
+              className={`px-2 py-0.5 rounded text-[11px] transition ${
+                viewMode === 'contact_sheet'
+                  ? 'bg-zinc-800 text-amber-300 font-bold'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              Sheet
+            </button>
+          </div>
+
+          {/* 3-Tier Preview Quality Selector */}
+          <div className="flex items-center bg-zinc-900 p-0.5 rounded border border-zinc-800">
+            <button
+              onClick={() => setPreviewQuality('performance')}
+              className={`px-2 py-0.5 rounded text-[10px] transition ${
+                previewQuality === 'performance'
+                  ? 'bg-emerald-500 text-zinc-950 font-bold'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+              title="Performance Mode: 640x360 @ 15fps (Zero CPU overhead)"
+            >
+              Performance
+            </button>
+            <button
+              onClick={() => setPreviewQuality('balanced')}
+              className={`px-2 py-0.5 rounded text-[10px] transition ${
+                previewQuality === 'balanced'
+                  ? 'bg-amber-400 text-zinc-950 font-bold'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+              title="Balanced Mode: 960x540 @ 24fps (Smooth preview)"
+            >
+              Balanced
+            </button>
+            <button
+              onClick={() => setPreviewQuality('full')}
+              className={`px-2 py-0.5 rounded text-[10px] transition ${
+                previewQuality === 'full'
+                  ? 'bg-red-500 text-white font-bold'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+              title="Full Master: 1920x1080 @ 30fps (Crisp inspection)"
+            >
+              Full
+            </button>
+          </div>
+
+          {/* Perf Monitor Toggle */}
+          <button
+            onClick={() => setShowPerfMonitor((prev) => !prev)}
+            className={`flex items-center gap-1 px-2 py-1 rounded border transition ${
+              showPerfMonitor
+                ? 'bg-amber-950/80 border-amber-500 text-amber-300'
+                : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+            }`}
+            title="Toggle Live Frame Performance Monitor"
+          >
+            <Gauge className="w-3.5 h-3.5" />
+            <span>Perf</span>
+          </button>
+
+          {/* Audio Mute Toggle */}
           {project.voiceUrl && (
             <button
               onClick={() => setIsMuted((prev) => !prev)}
@@ -366,35 +538,9 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
             </button>
           )}
 
-          {/* Preview Resolution Quality Selector */}
-          <div className="flex items-center gap-1 bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800">
-            <button
-              onClick={() => setPreviewQuality('draft')}
-              className={`px-2 py-0.5 rounded text-[10px] font-mono transition ${
-                previewQuality === 'draft'
-                  ? 'bg-amber-400 text-zinc-950 font-bold'
-                  : 'text-zinc-400 hover:text-zinc-200'
-              }`}
-              title="Draft Mode (960x540): Ultra smooth playback, 0% CPU lag"
-            >
-              Draft 540p
-            </button>
-            <button
-              onClick={() => setPreviewQuality('full')}
-              className={`px-2 py-0.5 rounded text-[10px] font-mono transition ${
-                previewQuality === 'full'
-                  ? 'bg-amber-400 text-zinc-950 font-bold'
-                  : 'text-zinc-400 hover:text-zinc-200'
-              }`}
-              title="Full Mode (1920x1080): Crisp master inspection"
-            >
-              Full 1080p
-            </button>
-          </div>
-
           <button
             onClick={() => setShowSafeArea((prev) => !prev)}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded border transition ${
+            className={`flex items-center gap-1 px-2 py-1 rounded border transition ${
               showSafeArea
                 ? 'bg-red-950/60 border-red-500 text-red-300'
                 : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'
@@ -402,16 +548,16 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
             title="Toggle TV Safe Title Action Box"
           >
             <ShieldCheck className="w-3.5 h-3.5" />
-            <span>Safe Area</span>
+            <span>Safe</span>
           </button>
 
           <select
             value={playbackSpeed}
             onChange={(e) => setPlaybackSpeed(parseFloat(e.target.value))}
-            className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-zinc-300 focus:outline-none"
+            className="bg-zinc-900 border border-zinc-800 rounded px-1.5 py-1 text-zinc-300 focus:outline-none text-[11px]"
           >
-            <option value={1.0}>1.0x Speed</option>
-            <option value={0.5}>0.5x Slow (Inspect)</option>
+            <option value={1.0}>1.0x</option>
+            <option value={0.5}>0.5x Slow</option>
             <option value={0.25}>0.25x Step</option>
           </select>
         </div>
@@ -421,157 +567,121 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
       <div className="relative w-full aspect-video bg-black flex items-center justify-center overflow-hidden">
         <canvas
           ref={canvasRef}
-          width={1920}
-          height={1080}
+          width={960}
+          height={540}
           className="w-full h-full object-contain cursor-pointer"
           onClick={() => setIsPlaying((prev) => !prev)}
         />
 
+        {/* Live Frame Performance HUD (Dev-only monitor) */}
+        {showPerfMonitor && (
+          <div className="absolute top-3 left-3 bg-zinc-950/85 backdrop-blur border border-zinc-700/80 rounded p-2.5 text-[11px] font-mono text-zinc-300 shadow-xl pointer-events-none flex flex-col gap-1 z-30">
+            <div className="flex items-center justify-between gap-4 border-b border-zinc-800 pb-1">
+              <span className="font-bold text-amber-400 uppercase">CANVAS PERFORMANCE</span>
+              <span className="text-zinc-500">{previewQuality.toUpperCase()}</span>
+            </div>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 pt-0.5">
+              <span className="text-zinc-500">FPS:</span>
+              <span className={`font-bold ${perfStats.fps >= 24 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                {perfStats.fps} fps
+              </span>
+
+              <span className="text-zinc-500">Frame Time:</span>
+              <span className="text-zinc-200">{perfStats.frameTimeMs} ms</span>
+
+              <span className="text-zinc-500">Render Time:</span>
+              <span className="text-zinc-200">{perfStats.renderTimeMs} ms</span>
+
+              <span className="text-zinc-500">Dropped:</span>
+              <span className={perfStats.droppedFrames > 5 ? 'text-red-400' : 'text-zinc-300'}>
+                {perfStats.droppedFrames}
+              </span>
+
+              <span className="text-zinc-500">Assets Ready:</span>
+              <span className="text-emerald-400">
+                {perfStats.assetsReady} / {perfStats.assetsTracked}
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Dynamic Vox-Style Subtitle Overlay with Active Beat Word Highlighting */}
-        {activeShot?.narration && viewMode !== 'contact_sheet' && (
-          <div className="absolute bottom-4 left-6 right-6 pointer-events-none flex flex-col items-center gap-1.5">
-            {/* Visual Cue Pill */}
-            {activeBeat?.visualCue && (
-              <div className="bg-amber-950/90 border border-amber-600/80 px-2.5 py-0.5 rounded text-[10px] font-mono text-amber-200 shadow-md backdrop-blur-sm flex items-center gap-1.5 animate-fadeIn">
-                <Sparkles className="w-3 h-3 text-amber-400" />
-                <span className="font-bold">CUE:</span>
-                <span>{activeBeat.visualCue}</span>
+        {viewMode !== 'contact_sheet' && (
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 max-w-2xl w-[90%] text-center pointer-events-none px-4 py-2 bg-black/75 backdrop-blur-sm rounded-lg border border-white/10 shadow-lg">
+            <p className="font-typewriter text-xs sm:text-sm text-zinc-200 leading-relaxed">
+              {activeShot?.narration}
+            </p>
+            {activeBeat && (
+              <div className="mt-1 flex items-center justify-center gap-1.5 text-[11px] font-mono text-amber-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+                <span className="font-bold uppercase tracking-wider">BEAT: "{activeBeat.text}"</span>
+                {activeBeat.visualCue && (
+                  <span className="text-zinc-400">({activeBeat.visualCue})</span>
+                )}
               </div>
             )}
-
-            {/* Subtitle Banner */}
-            <div className="bg-black/85 backdrop-blur-md border border-zinc-800 px-4 py-2 rounded-md max-w-3xl text-center shadow-2xl">
-              <p className="text-zinc-200 font-typewriter text-xs sm:text-sm leading-relaxed">
-                {activeBeat ? (
-                  activeShot.narration.split(activeBeat.text).map((part, i, arr) => (
-                    <React.Fragment key={i}>
-                      {part}
-                      {i < arr.length - 1 && (
-                        <span className="bg-amber-400 text-zinc-950 font-bold px-1.5 py-0.5 rounded mx-1 shadow-sm selection:bg-amber-500">
-                          {activeBeat.text}
-                        </span>
-                      )}
-                    </React.Fragment>
-                  ))
-                ) : (
-                  <span>"{activeShot.narration}"</span>
-                )}
-              </p>
-            </div>
           </div>
         )}
       </div>
 
-      {/* Timeline Controls, Beat Track & Scrubber */}
-      <div className="bg-zinc-950 px-4 py-3 border-t border-zinc-800 flex flex-col gap-2.5">
-        {/* Scrubber Bar */}
+      {/* Scrubbing & Transport Controls */}
+      <div className="p-4 bg-zinc-950 flex flex-col gap-3">
+        {/* Timeline Progress Slider */}
         <div className="flex items-center gap-3">
           <input
             type="range"
             min={0}
             max={maxDuration}
             step={0.05}
-            value={currentTime}
+            value={displayTime}
             onChange={(e) => handleSeek(parseFloat(e.target.value))}
-            className="flex-1 h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-red-600"
+            className="flex-1 h-2 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
           />
-          <span className="text-xs font-mono text-zinc-400 w-24 text-right">
-            {currentTime.toFixed(2)}s / {maxDuration.toFixed(2)}s
-          </span>
         </div>
 
-        {/* Beat Engine Track: 5-8 word rhythm blocks */}
-        {visibleBeats.length > 0 && (
-          <div className="flex flex-col gap-1 pt-1 border-t border-zinc-900">
-            <div className="flex items-center justify-between text-[10px] font-mono text-zinc-500">
-              <span className="flex items-center gap-1 font-bold text-amber-400/90 uppercase">
-                <Activity className="w-3 h-3" />
-                <span>Beat Timeline ({visibleBeats.length} beats)</span>
-              </span>
-              <span>
-                {activeBeat
-                  ? `Active Beat: "${activeBeat.text.slice(0, 36)}..." (${activeBeat.start.toFixed(1)}s - ${activeBeat.end.toFixed(1)}s)`
-                  : 'Click beat block to jump'}
-              </span>
-            </div>
-
-            {/* Segmented Beat Block Bar */}
-            <div className="flex items-center gap-1 w-full h-5 bg-zinc-900 p-0.5 rounded border border-zinc-800 overflow-hidden">
-              {visibleBeats.map((beat, idx) => {
-                const isActive = activeBeat?.id === beat.id;
-                const viewDuration = maxDuration || 1;
-                const relDuration = viewMode === 'shot' ? beat.duration : beat.duration;
-                const flexBasis = `${Math.max(4, (relDuration / viewDuration) * 100)}%`;
-
-                return (
-                  <button
-                    key={beat.id}
-                    onClick={() => handleBeatJump(beat)}
-                    title={`Beat ${idx + 1}: ${beat.text} (${beat.duration}s)\nCue: ${beat.visualCue}`}
-                    style={{ flex: `${relDuration} 0 0%` }}
-                    className={`h-full rounded-sm text-[9px] font-mono px-1 flex items-center justify-center truncate transition cursor-pointer ${
-                      isActive
-                        ? 'bg-amber-400 text-zinc-950 font-bold shadow-md ring-1 ring-amber-300'
-                        : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200'
-                    }`}
-                  >
-                    <span className="truncate">B{idx + 1}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Play / Reset / Navigation Buttons */}
-        <div className="flex items-center justify-between pt-1">
+        {/* Transport Actions */}
+        <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <button
               onClick={() => setIsPlaying((prev) => !prev)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded text-xs font-mono font-semibold transition active:scale-95 shadow-md shadow-red-950/40"
+              className="flex items-center gap-2 px-4 py-2 bg-amber-400 hover:bg-amber-300 text-zinc-950 font-bold rounded-lg transition font-mono text-xs shadow-md shadow-amber-950/30"
             >
-              {isPlaying ? (
-                <>
-                  <Pause className="w-3.5 h-3.5" />
-                  <span>PAUSE</span>
-                </>
-              ) : (
-                <>
-                  <Play className="w-3.5 h-3.5 fill-white" />
-                  <span>PLAY</span>
-                </>
-              )}
+              {isPlaying ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current" />}
+              <span>{isPlaying ? 'PAUSE' : 'PLAY'}</span>
             </button>
 
             <button
               onClick={handleReset}
-              className="p-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-xs transition active:scale-95"
-              title="Reset Playhead"
+              className="p-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 rounded-lg transition border border-zinc-800"
+              title="Reset to frame 0"
             >
-              <RotateCcw className="w-3.5 h-3.5" />
+              <RotateCcw className="w-4 h-4" />
             </button>
           </div>
 
-          {/* Shot Selector Tabs */}
-          <div className="flex items-center gap-1 overflow-x-auto py-0.5">
-            {project.shots.map((s, idx) => (
-              <button
-                key={s.shot_id}
-                onClick={() => {
-                  setActiveShotIndex(idx);
-                  setCurrentTime(0);
-                  setIsPlaying(false);
-                }}
-                className={`px-2.5 py-1 text-xs font-mono rounded border transition ${
-                  activeShotIndex === idx && viewMode === 'shot'
-                    ? 'bg-amber-400/10 border-amber-500 text-amber-300 font-bold'
-                    : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                Shot {String(idx + 1).padStart(2, '0')}
-              </button>
-            ))}
-          </div>
+          {/* Shot Selector Tabs in Shot View Mode */}
+          {viewMode === 'shot' && (
+            <div className="flex items-center gap-1.5 overflow-x-auto max-w-md">
+              {project.shots.map((s, idx) => (
+                <button
+                  key={s.shot_id}
+                  onClick={() => {
+                    setActiveShotIndex(idx);
+                    currentTimeRef.current = 0;
+                    setDisplayTime(0);
+                    drawFrame(0);
+                  }}
+                  className={`px-2.5 py-1 rounded text-xs font-mono transition ${
+                    activeShotIndex === idx
+                      ? 'bg-zinc-800 text-amber-300 border border-amber-500/50 font-bold'
+                      : 'bg-zinc-950 text-zinc-500 hover:text-zinc-300 border border-zinc-800/80'
+                  }`}
+                >
+                  0{s.order}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>
