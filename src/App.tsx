@@ -8,9 +8,12 @@ import { VoiceStudioView } from './components/VoiceStudioView.tsx';
 import { AssetInspectorView } from './components/AssetInspectorView.tsx';
 import { RenderModal } from './components/RenderModal.tsx';
 import { PresetDrawer } from './components/PresetDrawer.tsx';
+import { QuickGuideModal } from './components/QuickGuideModal.tsx';
 import { WALL_STREET_DEMO_PROJECT } from './data/wallStreetDemo.ts';
 import { Project, Shot, LayoutID, MotionID } from './types.ts';
 import { VOX_LAYOUTS } from './presets/index.ts';
+import { Language } from './locales/translations.ts';
+import { TTSProviderChoice } from './components/TopicDirector.tsx';
 
 export default function App() {
   const [project, setProject] = useState<Project>(WALL_STREET_DEMO_PROJECT);
@@ -19,13 +22,17 @@ export default function App() {
   const [activeShotIndex, setActiveShotIndex] = useState<number>(0);
   const [activeTab, setActiveTab] = useState<StudioTab>('canvas');
 
+  const [lang, setLang] = useState<Language>('vi');
+  const [isQuickGuideOpen, setIsQuickGuideOpen] = useState<boolean>(false);
+  const [selectedVoice, setSelectedVoice] = useState<string>('vi_female');
+
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [isGeneratingAssets, setIsGeneratingAssets] = useState<boolean>(false);
   const [generatingAssetKey, setGeneratingAssetKey] = useState<string | null>(null);
   const [ffmpegAvailable, setFfmpegAvailable] = useState<boolean | null>(null);
   const [isRenderModalOpen, setIsRenderModalOpen] = useState<boolean>(false);
   const [isPresetDrawerOpen, setIsPresetDrawerOpen] = useState<boolean>(false);
-  const [ttsProvider, setTtsProvider] = useState<'auto' | 'vieneu' | 'capcut' | 'elevenlabs'>('auto');
+  const [ttsProvider, setTtsProvider] = useState<TTSProviderChoice>('google');
   const [isGeneratingVoice, setIsGeneratingVoice] = useState<boolean>(false);
   const [voiceNotice, setVoiceNotice] = useState<string | null>(null);
 
@@ -281,22 +288,26 @@ export default function App() {
   };
 
   // Handler: Generate Audio-First Voice & Beat Timeline
-  const handleGenerateVoiceAndTimeline = async () => {
+  const handleGenerateVoiceAndTimeline = async (voiceId?: string, provider?: TTSProviderChoice) => {
     if (!project || project.shots.length === 0) return;
     setIsGeneratingVoice(true);
     setVoiceNotice(null);
+    const chosenProvider = provider || ttsProvider;
+    const chosenVoice = voiceId || selectedVoice;
+
     try {
       const response = await fetch('/api/voice-and-timeline', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           project,
-          provider: ttsProvider,
+          provider: chosenProvider,
+          voiceId: chosenVoice,
         }),
       });
 
       if (!response.ok) {
-        const errData = await response.json();
+        const errData = await response.json().catch(() => ({}));
         throw new Error(errData.error || 'Failed to synthesize voice and beat timeline');
       }
 
@@ -304,11 +315,19 @@ export default function App() {
       if (data.success && data.project) {
         setProject(data.project);
         setDuration(data.project.duration);
-        setVoiceNotice(`Audio-first timeline synced successfully (${data.project.audioTimeline?.beats?.length || 0} beats).`);
+        setVoiceNotice(
+          lang === 'vi'
+            ? `Đã tạo giọng đọc và đồng bộ ${data.project.audioTimeline?.beats?.length || 0} nhịp phân cảnh thành công!`
+            : `Audio-first timeline synced successfully (${data.project.audioTimeline?.beats?.length || 0} beats).`
+        );
       }
     } catch (err: any) {
       console.warn('Audio-first voice generation notice:', err.message);
-      setVoiceNotice(`TTS notice: ${err.message}. To run locally, ensure VieNeu or CapCut is running, or set ELEVENLABS_API_KEY.`);
+      setVoiceNotice(
+        lang === 'vi'
+          ? `Thông báo: ${err.message}`
+          : `TTS notice: ${err.message}.`
+      );
     } finally {
       setIsGeneratingVoice(false);
     }
@@ -327,6 +346,9 @@ export default function App() {
         setActiveTab={setActiveTab}
         onOpenRenderModal={() => setIsRenderModalOpen(true)}
         onOpenPresetDrawer={() => setIsPresetDrawerOpen(true)}
+        onOpenQuickGuide={() => setIsQuickGuideOpen(true)}
+        lang={lang}
+        setLang={setLang}
       />
 
       {/* Main Studio Body: Sidebar + Active Workspace View */}
@@ -337,6 +359,7 @@ export default function App() {
           setActiveTab={setActiveTab}
           project={project}
           onOpenRenderModal={() => setIsRenderModalOpen(true)}
+          lang={lang}
         />
 
         {/* Dynamic Studio Workspace Views */}
@@ -353,6 +376,7 @@ export default function App() {
               onUploadShotAsset={handleUploadShotAsset}
               generatingAssetKey={generatingAssetKey}
               onOpenInspector={() => setActiveTab('inspector')}
+              lang={lang}
             />
           )}
 
@@ -366,6 +390,7 @@ export default function App() {
               onGenerateStoryboard={handleGenerateStoryboard}
               isGenerating={isGenerating}
               onJumpToCanvas={() => setActiveTab('canvas')}
+              lang={lang}
             />
           )}
 
@@ -381,6 +406,7 @@ export default function App() {
               }}
               onGenerateVoiceAndTimeline={handleGenerateVoiceAndTimeline}
               isGeneratingVoice={isGeneratingVoice}
+              lang={lang}
             />
           )}
 
@@ -389,11 +415,14 @@ export default function App() {
               project={project}
               ttsProvider={ttsProvider}
               setTtsProvider={setTtsProvider}
+              selectedVoice={selectedVoice}
+              setSelectedVoice={setSelectedVoice}
               onGenerateVoiceAndTimeline={handleGenerateVoiceAndTimeline}
               isGeneratingVoice={isGeneratingVoice}
               voiceNotice={voiceNotice}
               setVoiceNotice={setVoiceNotice}
               onJumpToCanvas={() => setActiveTab('canvas')}
+              lang={lang}
             />
           )}
 
@@ -417,12 +446,20 @@ export default function App() {
         onClose={() => setIsRenderModalOpen(false)}
         project={project}
         ffmpegAvailable={ffmpegAvailable}
+        lang={lang}
       />
 
       {/* Architecture Presets Drawer */}
       <PresetDrawer
         isOpen={isPresetDrawerOpen}
         onClose={() => setIsPresetDrawerOpen(false)}
+      />
+
+      {/* Quick Guide Modal */}
+      <QuickGuideModal
+        isOpen={isQuickGuideOpen}
+        onClose={() => setIsQuickGuideOpen(false)}
+        lang={lang}
       />
     </div>
   );

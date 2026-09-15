@@ -271,24 +271,47 @@ export function renderShotFrame(
       ctx.shadowOffsetY = 6;
       ctx.fillText(displayContent, 0, 0);
     } else if (t.role === 'headline') {
-      // Bold condensed editorial headline
-      ctx.font = `700 ${t.fontSize || 68}px "Oswald", "Playfair Display", serif`;
-      const metrics = ctx.measureText(displayContent);
+      // Bold condensed editorial headline with intelligent multi-line stacking
+      const fontSize = t.fontSize || 64;
+      ctx.font = `700 ${fontSize}px "Oswald", "Playfair Display", serif`;
 
-      // Yellow highlighter or dark paper backing block
-      if (t.highlightColor) {
-        ctx.fillStyle = t.highlightColor;
-        ctx.fillRect(-12, -t.fontSize * 0.85, metrics.width + 24, t.fontSize * 1.05);
-      } else {
-        // High contrast black on white paper badge
-        ctx.fillStyle = '#111111';
-        ctx.fillRect(-16, -t.fontSize * 0.85, metrics.width + 32, t.fontSize * 1.08);
+      const words = displayContent.split(' ');
+      const lines: string[] = [];
+      let currentLine = '';
+
+      for (const w of words) {
+        const testLine = currentLine ? `${currentLine} ${w}` : w;
+        if (ctx.measureText(testLine).width > 520 && currentLine) {
+          lines.push(currentLine);
+          currentLine = w;
+        } else {
+          currentLine = testLine;
+        }
       }
+      if (currentLine) lines.push(currentLine);
 
-      ctx.fillStyle = t.highlightColor ? '#111111' : '#F4EEDA';
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'alphabetic';
-      ctx.fillText(displayContent, 0, 0);
+      const lineHeight = fontSize * 1.14;
+      const isCentered = Math.abs(t.position.x - 50) < 5;
+
+      lines.forEach((line, idx) => {
+        const lineMetrics = ctx.measureText(line);
+        const yOffset = idx * lineHeight;
+        const xOffset = isCentered ? -lineMetrics.width / 2 : 0;
+
+        // Yellow highlighter or dark paper backing block
+        if (t.highlightColor) {
+          ctx.fillStyle = t.highlightColor;
+          ctx.fillRect(xOffset - 12, yOffset - fontSize * 0.85, lineMetrics.width + 24, fontSize * 1.05);
+        } else {
+          ctx.fillStyle = '#111111';
+          ctx.fillRect(xOffset - 16, yOffset - fontSize * 0.85, lineMetrics.width + 32, fontSize * 1.08);
+        }
+
+        ctx.fillStyle = t.highlightColor ? '#111111' : '#F4EEDA';
+        ctx.textAlign = isCentered ? 'center' : 'left';
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillText(line, isCentered ? 0 : xOffset, yOffset);
+      });
     } else if (t.role === 'date' || t.role === 'label') {
       // Vintage typewriter date / classification badge
       ctx.font = `bold ${t.fontSize || 32}px "Courier Prime", monospace`;

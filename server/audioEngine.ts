@@ -16,9 +16,104 @@ async function probeDuration(filePath: string) {
   return duration;
 }
 
-export type TTSProviderName = 'auto' | 'vieneu' | 'capcut' | 'elevenlabs';
-export type TTSOptions = { provider?: TTSProviderName; voiceId?: string; modelId?: string; stability?: number; similarityBoost?: number; rate?: number };
+export type TTSProviderName = 'auto' | 'google' | 'vieneu' | 'capcut' | 'elevenlabs';
+export type TTSOptions = {
+  provider?: TTSProviderName;
+  voiceId?: string;
+  modelId?: string;
+  lang?: string;
+  stability?: number;
+  similarityBoost?: number;
+  rate?: number;
+};
 export type TTSResult = { success: true; url: string; filePath: string; duration: number; provider: string; voiceId?: string; modelId?: string };
+
+async function downloadGoogleTTSChunk(chunkText: string, lang: string, tempOutPath: string): Promise<void> {
+  const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(chunkText)}&tl=${lang}&client=tw-ob`;
+  const response = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      Accept: 'audio/mpeg, audio/*; q=0.9, */*; q=0.5',
+    },
+  });
+  if (!response.ok) throw new Error(`Google TTS request failed (${response.status})`);
+  const buf = Buffer.from(await response.arrayBuffer());
+  fs.writeFileSync(tempOutPath, buf);
+}
+
+export async function generateGoogleTTS(text: string, opts: TTSOptions): Promise<TTSResult> {
+  const clean = cleanText(text);
+  if (!clean) throw new Error('TTS input text cannot be empty');
+
+  // Detect language: check if text has Vietnamese characters or opts specify 'vi'
+  const isVietnamese =
+    opts.lang === 'vi' ||
+    (opts.voiceId && opts.voiceId.startsWith('vi')) ||
+    /[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]/i.test(clean);
+  const lang = isVietnamese ? 'vi' : 'en';
+
+  // Chunk text into phrases / clauses under 140 chars
+  const rawSentences = clean.split(/(?<=[.!?,\n;:])\s+/);
+  const chunks: string[] = [];
+  let currentChunk = '';
+
+  for (const s of rawSentences) {
+    if ((currentChunk + ' ' + s).trim().length > 130 && currentChunk.length > 0) {
+      chunks.push(currentChunk.trim());
+      currentChunk = s;
+    } else {
+      currentChunk = currentChunk ? `${currentChunk} ${s}` : s;
+    }
+  }
+  if (currentChunk.trim()) {
+    chunks.push(currentChunk.trim());
+  }
+
+  const id = `voice_google_${Date.now()}`;
+  const tempDir = path.join(process.cwd(), 'temp_renders', id);
+  fs.mkdirSync(tempDir, { recursive: true });
+
+  const chunkFiles: string[] = [];
+  for (let i = 0; i < chunks.length; i++) {
+    const chunkFile = path.join(tempDir, `chunk_${String(i).padStart(3, '0')}.mp3`);
+    await downloadGoogleTTSChunk(chunks[i], lang, chunkFile);
+    chunkFiles.push(chunkFile);
+  }
+
+  const listFilePath = path.join(tempDir, 'chunks.txt');
+  fs.writeFileSync(listFilePath, chunkFiles.map((f) => `file '${f}'`).join('\n'));
+
+  const rawConcatPath = path.join(tempDir, 'raw_concat.mp3');
+  await execAsync(`ffmpeg -y -f concat -safe 0 -i "${listFilePath}" -c copy "${rawConcatPath}"`);
+
+  const finalMp3Path = path.join(OUTPUTS_DIR, `${id}.mp3`);
+
+  // Sound enhancement filter:
+  // For male/documentary voice: subtle pitch shift + warm documentary lower-mid warmth
+  // For standard female voice: broadcast clarity EQ
+  const isMale = opts.voiceId === 'vi_male' || opts.voiceId === 'en_male';
+  const filterArg = isMale
+    ? `-af "asetrate=44100*0.93,atempo=1/0.93,equalizer=f=140:width_type=o:width=1.2:g=3.5,equalizer=f=2800:width_type=o:width=1.0:g=-1.0"`
+    : `-af "equalizer=f=180:width_type=o:width=1.0:g=2.0,equalizer=f=3200:width_type=o:width=1.0:g=1.0"`;
+
+  await execAsync(`ffmpeg -y -i "${rawConcatPath}" ${filterArg} -b:a 192k "${finalMp3Path}"`);
+
+  // Clean up temp dir
+  try {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  } catch {}
+
+  const duration = await probeDuration(finalMp3Path);
+  return {
+    success: true,
+    url: `/outputs/audio/${id}.mp3`,
+    filePath: finalMp3Path,
+    duration,
+    provider: 'google',
+    voiceId: opts.voiceId || (isVietnamese ? 'vi_female' : 'en_male'),
+    modelId: lang,
+  };
+}
 
 async function saveRemoteAudio(url: string, provider: string, ext = 'mp3') {
   const response = await fetch(url);
@@ -101,26 +196,68 @@ async function isCapCutAvailable(): Promise<boolean> {
 export async function getTTSProviders() {
   const vieneu = await isVieNeuAvailable();
   const capcut = await isCapCutAvailable();
-  return { vieneu, capcut, elevenlabs: Boolean(process.env.ELEVENLABS_API_KEY) };
+  return {
+    google: true,
+    vieneu,
+    capcut,
+    elevenlabs: Boolean(process.env.ELEVENLABS_API_KEY),
+  };
 }
 
 export async function generateVoice(text: string, opts: TTSOptions = {}) {
   const clean = cleanText(text);
   if (!clean) throw new Error('Voice text is empty');
-  const requested = opts.provider || (process.env.TTS_PROVIDER as TTSProviderName) || 'auto';
-  if (requested === 'vieneu') return generateVieNeu(clean, opts);
-  if (requested === 'capcut') {
-    if (!await isCapCutAvailable()) {
-      throw new Error('CapCut TTS requires Python module "capcut_tts_api". Please run "pip install -e /path/to/capcut-tts-api" or choose another provider.');
-    }
-    return generateCapCut(clean, opts);
+  const requested = opts.provider || (process.env.TTS_PROVIDER as TTSProviderName) || 'google';
+
+  if (requested === 'google') return generateGoogleTTS(clean, opts);
+
+  if (requested === 'vieneu') {
+    if (await isVieNeuAvailable()) return generateVieNeu(clean, opts);
+    console.warn('[TTS] VieNeu not available, falling back to Google Speech');
+    return generateGoogleTTS(clean, opts);
   }
-  if (requested === 'elevenlabs') return generateElevenLabs(clean, opts);
-  const failures: string[] = [];
-  if (await isVieNeuAvailable()) { try { return await generateVieNeu(clean, opts); } catch (e:any) { failures.push(`vieneu: ${e.message}`); } }
-  if (await isCapCutAvailable()) { try { return await generateCapCut(clean, opts); } catch (e:any) { failures.push(`capcut: ${e.message}`); } }
-  if (process.env.ELEVENLABS_API_KEY) { try { return await generateElevenLabs(clean, opts); } catch (e:any) { failures.push(`elevenlabs: ${e.message}`); } }
-  throw new Error(`No TTS provider succeeded. ${failures.join(' | ')}`);
+
+  if (requested === 'capcut') {
+    if (await isCapCutAvailable()) {
+      try {
+        return await generateCapCut(clean, opts);
+      } catch (err: any) {
+        console.warn('[TTS] CapCut failed, falling back to Google Speech:', err.message);
+      }
+    }
+    return generateGoogleTTS(clean, opts);
+  }
+
+  if (requested === 'elevenlabs') {
+    if (process.env.ELEVENLABS_API_KEY) {
+      try {
+        return await generateElevenLabs(clean, opts);
+      } catch (err: any) {
+        console.warn('[TTS] ElevenLabs failed, falling back to Google Speech:', err.message);
+      }
+    }
+    return generateGoogleTTS(clean, opts);
+  }
+
+  // Auto mode: try configured providers, and always guarantee success with Google TTS
+  if (await isVieNeuAvailable()) {
+    try {
+      return await generateVieNeu(clean, opts);
+    } catch {}
+  }
+  if (await isCapCutAvailable()) {
+    try {
+      return await generateCapCut(clean, opts);
+    } catch {}
+  }
+  if (process.env.ELEVENLABS_API_KEY) {
+    try {
+      return await generateElevenLabs(clean, opts);
+    } catch {}
+  }
+
+  // Guaranteed fallback: high-fidelity Google speech engine
+  return generateGoogleTTS(clean, opts);
 }
 
 export function buildBeatTimeline(shots: any[], totalDuration: number, minWords = 5, maxWords = 8) {

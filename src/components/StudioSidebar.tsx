@@ -13,6 +13,7 @@ import {
   Layers,
 } from 'lucide-react';
 import { Project } from '../types.ts';
+import { Language, translations } from '../locales/translations.ts';
 
 export type StudioTab =
   | 'overview'
@@ -27,6 +28,7 @@ interface StudioSidebarProps {
   setActiveTab: (tab: StudioTab) => void;
   project: Project;
   onOpenRenderModal: () => void;
+  lang?: Language;
 }
 
 export const StudioSidebar: React.FC<StudioSidebarProps> = ({
@@ -34,7 +36,10 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = ({
   setActiveTab,
   project,
   onOpenRenderModal,
+  lang = 'vi',
 }) => {
+  const t = translations[lang];
+
   const readyAssetsCount = project.shots.reduce(
     (acc, s) => acc + s.assets.filter((a) => a.status === 'ready' || !!a.source).length,
     0
@@ -44,42 +49,44 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = ({
   const navItems = [
     {
       id: 'canvas' as StudioTab,
-      label: 'Video Canvas',
+      label: t.tabCanvas,
       sub: `${project.shots.length} Shots • 1080p`,
       icon: Film,
       badge: `${project.duration}s`,
     },
     {
       id: 'overview' as StudioTab,
-      label: 'Project Brief',
-      sub: 'Topic & Specifications',
+      label: t.tabBrief,
+      sub: lang === 'vi' ? 'Chủ đề & Cấu hình' : 'Topic & Specifications',
       icon: FolderKanban,
       status: 'ready',
     },
     {
       id: 'script' as StudioTab,
-      label: 'Script & Beats',
-      sub: 'Narration & sync',
+      label: t.tabVoice,
+      sub: lang === 'vi' ? 'Kịch bản & Nhịp' : 'Narration & sync',
       icon: FileText,
       status: project.script ? 'ready' : 'pending',
     },
     {
       id: 'voice' as StudioTab,
-      label: 'Voice & Audio',
-      sub: project.voiceUrl ? 'TTS Audio synced' : 'Requires generation',
+      label: lang === 'vi' ? 'Phòng Thu Giọng' : 'Voice & Audio',
+      sub: project.voiceUrl
+        ? (lang === 'vi' ? 'Âm thanh đã đồng bộ' : 'TTS Audio synced')
+        : (lang === 'vi' ? 'Chưa tạo giọng' : 'Requires generation'),
       icon: Mic,
       status: project.voiceUrl ? 'ready' : 'pending',
     },
     {
       id: 'inspector' as StudioTab,
-      label: 'Asset Inspector',
+      label: t.tabInspector,
       sub: `${readyAssetsCount}/${totalAssetsCount} Visual Assets`,
       icon: Sliders,
       badge: `${readyAssetsCount}/${totalAssetsCount}`,
     },
     {
       id: 'render' as StudioTab,
-      label: 'Export Studio',
+      label: lang === 'vi' ? 'Xuất Video' : 'Export Studio',
       sub: 'H.264 / AAC 1080p',
       icon: Download,
       action: onOpenRenderModal,
@@ -92,7 +99,7 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = ({
       <div className="p-3.5 flex flex-col gap-3">
         <div className="px-2 py-1">
           <div className="text-[10px] font-mono uppercase tracking-wider text-zinc-500 font-bold">
-            Documentary Studio
+            {t.appName}
           </div>
           <div className="text-sm font-editorial font-bold text-zinc-200 truncate mt-0.5" title={project.title}>
             {project.title || 'Untitled Project'}

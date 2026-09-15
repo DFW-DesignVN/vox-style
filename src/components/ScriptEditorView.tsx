@@ -11,6 +11,7 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { Project, Shot, Beat } from '../types.ts';
+import { Language, translations } from '../locales/translations.ts';
 
 interface ScriptEditorViewProps {
   project: Project;
@@ -20,6 +21,7 @@ interface ScriptEditorViewProps {
   onJumpToShot: (shotIdx: number) => void;
   onGenerateVoiceAndTimeline?: () => void;
   isGeneratingVoice?: boolean;
+  lang?: Language;
 }
 
 export const ScriptEditorView: React.FC<ScriptEditorViewProps> = ({
@@ -30,7 +32,9 @@ export const ScriptEditorView: React.FC<ScriptEditorViewProps> = ({
   onJumpToShot,
   onGenerateVoiceAndTimeline,
   isGeneratingVoice = false,
+  lang = 'vi',
 }) => {
+  const t = translations[lang];
   const [isEditingFullScript, setIsEditingFullScript] = useState<boolean>(false);
   const [scriptDraft, setScriptDraft] = useState<string>(project.script || '');
 

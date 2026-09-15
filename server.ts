@@ -21,6 +21,24 @@ app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 app.use('/outputs', express.static(OUTPUTS_DIR));
 
+// Image proxy to bypass CORS restrictions during Canvas compositing & video export
+app.get('/api/proxy-image', async (req, res) => {
+  try {
+    const imageUrl = req.query.url as string;
+    if (!imageUrl) return res.status(400).send('url parameter required');
+    const upstream = await fetch(imageUrl);
+    if (!upstream.ok) return res.status(upstream.status).send('Failed to fetch remote image');
+    const contentType = upstream.headers.get('content-type') || 'image/jpeg';
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    const buffer = Buffer.from(await upstream.arrayBuffer());
+    res.send(buffer);
+  } catch (err: any) {
+    res.status(500).send(err.message);
+  }
+});
+
 app.get('/api/health', async (_req, res) => {
   try { const { stdout } = await execAsync('ffmpeg -version'); const m = stdout.match(/ffmpeg version ([^\s]+)/); res.json({ status:'ok', ffmpeg:true, ffmpegVersion:m?.[1]||'detected', nodeEnv:process.env.NODE_ENV||'development', tts:!!process.env.ELEVENLABS_API_KEY }); }
   catch (err:any) { res.json({ status:'ok', ffmpeg:false, tts:!!process.env.ELEVENLABS_API_KEY, error:err.message }); }

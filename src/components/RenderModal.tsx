@@ -3,12 +3,14 @@ import { CheckCircle2, AlertTriangle, Video, Download, X, Loader2, Info } from '
 import { Project } from '../types.ts';
 import { renderShotFrame, preloadShotImages } from '../utils/compositor.ts';
 import { runQualityGate } from '../utils/qualityGate.ts';
+import { Language, translations } from '../locales/translations.ts';
 
 interface RenderModalProps {
   isOpen: boolean;
   onClose: () => void;
   project: Project;
   ffmpegAvailable: boolean | null;
+  lang?: Language;
 }
 
 export const RenderModal: React.FC<RenderModalProps> = ({
@@ -16,7 +18,9 @@ export const RenderModal: React.FC<RenderModalProps> = ({
   onClose,
   project,
   ffmpegAvailable,
+  lang = 'vi',
 }) => {
+  const t = translations[lang];
   const [isRendering, setIsRendering] = useState<boolean>(false);
   const [progress, setProgress] = useState<number>(0);
   const [statusMessage, setStatusMessage] = useState<string>('');
@@ -40,7 +44,7 @@ export const RenderModal: React.FC<RenderModalProps> = ({
     setError(null);
     setProgress(0);
     setVerifiedStreams(null);
-    setStatusMessage('Preloading assets for all shots...');
+    setStatusMessage(lang === 'vi' ? 'Đang tải trước hình ảnh các phân cảnh...' : 'Preloading assets for all shots...');
 
     try {
       // 1. Preload images for all shots
@@ -51,7 +55,11 @@ export const RenderModal: React.FC<RenderModalProps> = ({
       // 2. Offscreen rendering of frames with Chunked Streaming (scales to 15m+ episodes without OOM)
       const fps = renderFps;
       const totalFrames = Math.max(1, Math.round(project.duration * fps));
-      setStatusMessage(`Initializing render session (${totalFrames} frames @ ${fps} FPS)...`);
+      setStatusMessage(
+        lang === 'vi'
+          ? `Đang khởi tạo phiên kết xuất (${totalFrames} khung hình @ ${fps} FPS)...`
+          : `Initializing render session (${totalFrames} frames @ ${fps} FPS)...`
+      );
 
       // A. Start Session
       const startRes = await fetch('/api/render/session/start', {
@@ -66,7 +74,7 @@ export const RenderModal: React.FC<RenderModalProps> = ({
       });
 
       if (!startRes.ok) {
-        throw new Error('Failed to initialize video render session');
+        throw new Error(lang === 'vi' ? 'Không thể khởi tạo phiên kết xuất video' : 'Failed to initialize video render session');
       }
 
       const { sessionId } = await startRes.json();
@@ -75,7 +83,7 @@ export const RenderModal: React.FC<RenderModalProps> = ({
       offCanvas.width = 1920;
       offCanvas.height = 1080;
       const ctx = offCanvas.getContext('2d');
-      if (!ctx) throw new Error('Could not initialize canvas context');
+      if (!ctx) throw new Error(lang === 'vi' ? 'Không thể khởi tạo Canvas 2D' : 'Could not initialize canvas context');
 
       const CHUNK_SIZE = 25;
       let chunkBuffer: string[] = [];
@@ -83,7 +91,7 @@ export const RenderModal: React.FC<RenderModalProps> = ({
       let chunkStartIndex = 0;
 
       // Preload all project assets prior to headless compositing
-      setStatusMessage('Preloading and decoding archival media assets...');
+      setStatusMessage(lang === 'vi' ? 'Đang giải mã và vẽ tư liệu tài liệu...' : 'Preloading and decoding archival media assets...');
       for (const shot of project.shots) {
         await preloadShotImages(shot);
       }
@@ -91,8 +99,8 @@ export const RenderModal: React.FC<RenderModalProps> = ({
       for (const shot of project.shots) {
         const totalFramesInShot = Math.max(1, Math.round(shot.duration * fps));
         for (let f = 0; f < totalFramesInShot; f++) {
-          const t = f / fps;
-          renderShotFrame(ctx, shot, t, 1920, 1080);
+          const frameTime = f / fps;
+          renderShotFrame(ctx, shot, frameTime, 1920, 1080);
           chunkBuffer.push(offCanvas.toDataURL('image/jpeg', 0.82));
           completedFrames++;
 
@@ -117,13 +125,21 @@ export const RenderModal: React.FC<RenderModalProps> = ({
 
             const pct = Math.min(80, Math.floor((completedFrames / totalFrames) * 80));
             setProgress(pct);
-            setStatusMessage(`Compositing & streaming frame ${completedFrames}/${totalFrames} (Shot ${shot.order}/${project.shots.length})...`);
+            setStatusMessage(
+              lang === 'vi'
+                ? `Đang dựng & truyền khung hình ${completedFrames}/${totalFrames} (Cảnh ${shot.order}/${project.shots.length})...`
+                : `Compositing & streaming frame ${completedFrames}/${totalFrames} (Shot ${shot.order}/${project.shots.length})...`
+            );
           }
         }
       }
 
       setProgress(85);
-      setStatusMessage('Transcoding 1080p MP4 with FFmpeg H.264 & muxing AAC narration...');
+      setStatusMessage(
+        lang === 'vi'
+          ? 'Đang mã hóa video 1080p MP4 bằng FFmpeg H.264 & ghép âm thanh AAC...'
+          : 'Transcoding 1080p MP4 with FFmpeg H.264 & muxing AAC narration...'
+      );
 
       // B. Finish and Encode
       const finishRes = await fetch('/api/render/session/finish', {
@@ -142,8 +158,8 @@ export const RenderModal: React.FC<RenderModalProps> = ({
       setVerifiedStreams(resData.verifiedStreams || null);
       setStatusMessage(
         resData.hasAudio
-          ? `Rendering finished! 1080p MP4 ready with AAC audio (FFprobe: ${resData.verifiedStreams?.video || 'h264'} / ${resData.verifiedStreams?.audio || 'aac'}).`
-          : 'Rendering finished! 1080p MP4 ready (silent video).'
+          ? (lang === 'vi' ? 'Kết xuất thành công! Video 1080p MP4 kèm âm thanh thuyết minh AAC đã sẵn sàng.' : `Rendering finished! 1080p MP4 ready with AAC audio.`)
+          : (lang === 'vi' ? 'Kết xuất thành công! Video 1080p MP4 đã sẵn sàng (không tiếng).' : 'Rendering finished! 1080p MP4 ready (silent video).')
       );
       setVideoUrl(resData.videoUrl);
     } catch (err: any) {
@@ -155,15 +171,15 @@ export const RenderModal: React.FC<RenderModalProps> = ({
   };
 
   const gateItems = [
-    { label: `Script Valid (${project.script.length} chars)`, passed: qualityGate.scriptValid, blocking: true },
-    { label: `Continuous Beat Timeline (${project.shots.length} shots)`, passed: qualityGate.timelineContinuous, blocking: true },
-    { label: 'All Shots Have Assets', passed: qualityGate.allShotsHaveAssets, blocking: true },
-    { label: 'Text Within Safe Area (8–92%)', passed: qualityGate.textWithinSafeArea, blocking: true },
-    { label: 'FFmpeg Video Engine', passed: qualityGate.ffmpegAvailable, blocking: true },
+    { label: `${t.script} (${project.script.length} chars)`, passed: qualityGate.scriptValid, blocking: true },
+    { label: `${t.timeline} (${project.shots.length} shots)`, passed: qualityGate.timelineContinuous, blocking: true },
+    { label: lang === 'vi' ? 'Tư liệu phân cảnh' : 'All Shots Have Assets', passed: qualityGate.allShotsHaveAssets, blocking: false },
+    { label: lang === 'vi' ? 'Vùng an toàn Safe Area' : 'Text Within Safe Area (8–92%)', passed: qualityGate.textWithinSafeArea, blocking: false },
+    { label: lang === 'vi' ? 'Động cơ FFmpeg' : 'FFmpeg Video Engine', passed: qualityGate.ffmpegAvailable, blocking: true },
     {
       label: project.voiceUrl
-        ? 'Voice Narration Track (Muxed via FFmpeg AAC)'
-        : 'Voice Track (Optional: Silent render if not generated)',
+        ? (lang === 'vi' ? 'Âm thanh thuyết minh (AAC)' : 'Voice Narration Track (FFmpeg AAC)')
+        : (lang === 'vi' ? 'Âm thanh (Tùy chọn: Không có tiếng)' : 'Voice Track (Optional: Silent render)'),
       passed: qualityGate.voiceValid,
       blocking: false,
     },
@@ -177,7 +193,7 @@ export const RenderModal: React.FC<RenderModalProps> = ({
           <div className="flex items-center gap-2">
             <Video className="w-5 h-5 text-red-500" />
             <h3 className="font-editorial text-lg font-bold uppercase tracking-tight text-zinc-100">
-              Export 1080p Documentary MP4
+              {t.renderTitle}
             </h3>
           </div>
           <button
@@ -193,7 +209,7 @@ export const RenderModal: React.FC<RenderModalProps> = ({
         <div className="bg-zinc-950 p-4 rounded-lg border border-zinc-800 space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-xs font-mono font-bold text-amber-400 uppercase tracking-wider block">
-              Section 33: Production Quality Gate
+              {t.qualityGateTitle}
             </span>
             <span
               className={`text-[11px] font-mono px-2 py-0.5 rounded font-bold uppercase ${
@@ -202,7 +218,7 @@ export const RenderModal: React.FC<RenderModalProps> = ({
                   : 'bg-rose-950 text-rose-300 border border-rose-800'
               }`}
             >
-              {qualityGate.readyToRender ? 'Gate Passed' : 'Gate Blocked'}
+              {qualityGate.readyToRender ? t.gatePassed : t.gateBlocked}
             </span>
           </div>
 
@@ -246,7 +262,7 @@ export const RenderModal: React.FC<RenderModalProps> = ({
         {/* FPS selector before render */}
         {!isRendering && !videoUrl && (
           <div className="flex items-center justify-between bg-zinc-950/60 p-3 rounded-lg border border-zinc-800 text-xs font-mono">
-            <span className="text-zinc-400">Frame Rate Target:</span>
+            <span className="text-zinc-400">{t.fpsTarget}</span>
             <div className="flex gap-2">
               <button
                 type="button"
@@ -257,7 +273,7 @@ export const RenderModal: React.FC<RenderModalProps> = ({
                     : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'
                 }`}
               >
-                30 FPS (VOX Standard)
+                30 FPS ({lang === 'vi' ? 'Chuẩn VOX' : 'VOX Standard'})
               </button>
               <button
                 type="button"
@@ -268,7 +284,7 @@ export const RenderModal: React.FC<RenderModalProps> = ({
                     : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'
                 }`}
               >
-                20 FPS (Fast Draft)
+                20 FPS ({lang === 'vi' ? 'Bản thảo nhanh' : 'Fast Draft'})
               </button>
             </div>
           </div>
@@ -295,10 +311,10 @@ export const RenderModal: React.FC<RenderModalProps> = ({
           <div className="space-y-4">
             <div className="p-3 bg-emerald-950/40 border border-emerald-800 rounded-lg text-xs font-mono text-emerald-300 flex items-center justify-between">
               <div className="flex flex-col gap-1">
-                <span className="font-semibold">✓ 1080p Documentary MP4 Render Complete!</span>
+                <span className="font-semibold">{t.renderComplete}</span>
                 {verifiedStreams && (
                   <span className="text-[11px] text-emerald-400/90 font-mono">
-                    FFprobe Verified: Video ({verifiedStreams.video?.toUpperCase()})
+                    FFprobe: Video ({verifiedStreams.video?.toUpperCase()})
                     {verifiedStreams.audio ? ` • Audio (${verifiedStreams.audio?.toUpperCase()} 192k)` : ' • Silent Track'}
                   </span>
                 )}
@@ -306,10 +322,10 @@ export const RenderModal: React.FC<RenderModalProps> = ({
               <a
                 href={videoUrl}
                 download={`${project.project_id}.mp4`}
-                className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-bold transition shrink-0"
+                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-bold transition shrink-0 shadow"
               >
                 <Download className="w-3.5 h-3.5" />
-                <span>Download MP4</span>
+                <span>{t.downloadMp4}</span>
               </a>
             </div>
 
@@ -332,7 +348,7 @@ export const RenderModal: React.FC<RenderModalProps> = ({
             disabled={isRendering}
             className="px-4 py-2 text-xs font-mono text-zinc-400 hover:text-zinc-200"
           >
-            Close
+            {t.close}
           </button>
           {!videoUrl && (
             <button
@@ -341,7 +357,7 @@ export const RenderModal: React.FC<RenderModalProps> = ({
               className="flex items-center gap-2 px-5 py-2.5 bg-red-600 hover:bg-red-500 active:scale-95 text-white font-mono font-bold text-xs rounded-lg transition shadow-lg shadow-red-950/60 disabled:opacity-50"
             >
               <Video className="w-4 h-4" />
-              <span>START FFMPEG RENDER</span>
+              <span>{t.startRender}</span>
             </button>
           )}
         </div>

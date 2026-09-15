@@ -13,6 +13,7 @@ import {
 import { CanvasPlayer } from './CanvasPlayer.tsx';
 import { StoryboardView } from './StoryboardView.tsx';
 import { Project, Shot } from '../types.ts';
+import { Language, translations } from '../locales/translations.ts';
 
 interface CanvasStudioViewProps {
   project: Project;
@@ -25,6 +26,7 @@ interface CanvasStudioViewProps {
   onUploadShotAsset?: (shotIndex: number, assetId: string, file: File) => void;
   generatingAssetKey?: string | null;
   onOpenInspector: () => void;
+  lang?: Language;
 }
 
 export const CanvasStudioView: React.FC<CanvasStudioViewProps> = ({
@@ -38,7 +40,10 @@ export const CanvasStudioView: React.FC<CanvasStudioViewProps> = ({
   onUploadShotAsset,
   generatingAssetKey,
   onOpenInspector,
+  lang = 'vi',
 }) => {
+  const t = translations[lang];
+
   return (
     <div className="flex-1 overflow-y-auto p-4 sm:p-6 flex flex-col gap-6 w-full max-w-7xl mx-auto">
       {/* Top Main Focus: Large Video Canvas Stage */}
@@ -47,6 +52,7 @@ export const CanvasStudioView: React.FC<CanvasStudioViewProps> = ({
           project={project}
           activeShotIndex={activeShotIndex}
           setActiveShotIndex={setActiveShotIndex}
+          lang={lang}
         />
       </div>
 
@@ -56,7 +62,7 @@ export const CanvasStudioView: React.FC<CanvasStudioViewProps> = ({
           <div className="flex items-center gap-2">
             <Layers className="w-4 h-4 text-amber-400" />
             <h3 className="font-editorial text-base font-bold text-zinc-100 uppercase tracking-tight">
-              Storyboard Sequences ({project.shots.length} Shots • {project.duration}s)
+              {t.storyboardTitle} ({project.shots.length} Shots • {project.duration}s)
             </h3>
           </div>
 
@@ -65,7 +71,7 @@ export const CanvasStudioView: React.FC<CanvasStudioViewProps> = ({
             className="flex items-center gap-1 text-xs font-mono text-amber-400 hover:text-amber-300 px-2.5 py-1 rounded bg-zinc-900 border border-zinc-800 transition"
           >
             <Sliders className="w-3.5 h-3.5" />
-            <span>Open Asset Inspector</span>
+            <span>{t.openInspector}</span>
           </button>
         </div>
 

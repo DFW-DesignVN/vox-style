@@ -11,10 +11,13 @@ import {
   Sparkles,
   Mic,
   Gauge,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import { Project, Shot, Beat } from '../types.ts';
 import { renderShotFrame, preloadShotImages } from '../utils/compositor.ts';
 import { getAssetCacheStats } from '../utils/assetCache.ts';
+import { Language, translations } from '../locales/translations.ts';
 
 export type PreviewQualityMode = 'performance' | 'balanced' | 'full';
 
@@ -23,13 +26,16 @@ interface CanvasPlayerProps {
   activeShotIndex: number;
   setActiveShotIndex: (idx: number) => void;
   onFramesReadyForRender?: (frames: string[]) => void;
+  lang?: Language;
 }
 
 export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
   project,
   activeShotIndex,
   setActiveShotIndex,
+  lang = 'vi',
 }) => {
+  const t = translations[lang];
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -39,6 +45,7 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
   const [showSafeArea, setShowSafeArea] = useState<boolean>(false);
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<'shot' | 'timeline' | 'contact_sheet'>('shot');
+  const [sizeMode, setSizeMode] = useState<'fit' | 'expand'>('fit');
   const [previewQuality, setPreviewQuality] = useState<PreviewQualityMode>('balanced');
   const [showPerfMonitor, setShowPerfMonitor] = useState<boolean>(false);
 
@@ -444,7 +451,7 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
                   : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
-              Shot
+              {t.shotMode}
             </button>
             <button
               onClick={() => {
@@ -458,7 +465,7 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
                   : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
-              Sequence
+              {t.sequenceMode}
             </button>
             <button
               onClick={() => setViewMode('contact_sheet')}
@@ -468,9 +475,23 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
                   : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
-              Sheet
+              {t.sheetMode}
             </button>
           </div>
+
+          {/* Size Mode Toggle (Fit vs Expand) */}
+          <button
+            onClick={() => setSizeMode((prev) => (prev === 'fit' ? 'expand' : 'fit'))}
+            className={`flex items-center gap-1 px-2 py-1 rounded border text-[11px] font-mono transition ${
+              sizeMode === 'fit'
+                ? 'bg-amber-950/60 border-amber-500/80 text-amber-300 font-bold'
+                : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+            }`}
+            title={sizeMode === 'fit' ? t.expandMode : t.fitMode}
+          >
+            {sizeMode === 'fit' ? <Maximize2 className="w-3 h-3" /> : <Minimize2 className="w-3 h-3 text-amber-400" />}
+            <span>{sizeMode === 'fit' ? t.fitMode : t.expandMode}</span>
+          </button>
 
           {/* 3-Tier Preview Quality Selector */}
           <div className="flex items-center bg-zinc-900 p-0.5 rounded border border-zinc-800">
@@ -481,9 +502,9 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
                   ? 'bg-emerald-500 text-zinc-950 font-bold'
                   : 'text-zinc-400 hover:text-zinc-200'
               }`}
-              title="Performance Mode: 640x360 @ 15fps (Zero CPU overhead)"
+              title="Performance Mode: 640x360 @ 15fps"
             >
-              Performance
+              Perf
             </button>
             <button
               onClick={() => setPreviewQuality('balanced')}
@@ -492,9 +513,9 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
                   ? 'bg-amber-400 text-zinc-950 font-bold'
                   : 'text-zinc-400 hover:text-zinc-200'
               }`}
-              title="Balanced Mode: 960x540 @ 24fps (Smooth preview)"
+              title="Balanced Mode: 960x540 @ 24fps"
             >
-              Balanced
+              960p
             </button>
             <button
               onClick={() => setPreviewQuality('full')}
@@ -503,9 +524,9 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
                   ? 'bg-red-500 text-white font-bold'
                   : 'text-zinc-400 hover:text-zinc-200'
               }`}
-              title="Full Master: 1920x1080 @ 30fps (Crisp inspection)"
+              title="Full Master: 1920x1080 @ 30fps"
             >
-              Full
+              1080p
             </button>
           </div>
 
@@ -517,10 +538,10 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
                 ? 'bg-amber-950/80 border-amber-500 text-amber-300'
                 : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'
             }`}
-            title="Toggle Live Frame Performance Monitor"
+            title={t.perfBudget}
           >
             <Gauge className="w-3.5 h-3.5" />
-            <span>Perf</span>
+            <span className="hidden sm:inline">{t.perf}</span>
           </button>
 
           {/* Audio Mute Toggle */}
@@ -532,7 +553,7 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
                   ? 'bg-red-950/60 border-red-500 text-red-300'
                   : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:text-white'
               }`}
-              title={isMuted ? 'Unmute voice audio' : 'Mute voice audio'}
+              title={isMuted ? t.unmute : t.mute}
             >
               {isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
             </button>
@@ -548,7 +569,7 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
             title="Toggle TV Safe Title Action Box"
           >
             <ShieldCheck className="w-3.5 h-3.5" />
-            <span>Safe</span>
+            <span className="hidden sm:inline">{t.safeArea}</span>
           </button>
 
           <select
@@ -563,15 +584,22 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
         </div>
       </div>
 
-      {/* 16:9 Canvas Viewport */}
-      <div className="relative w-full aspect-video bg-black flex items-center justify-center overflow-hidden">
-        <canvas
-          ref={canvasRef}
-          width={960}
-          height={540}
-          className="w-full h-full object-contain cursor-pointer"
-          onClick={() => setIsPlaying((prev) => !prev)}
-        />
+      {/* 16:9 Canvas Viewport with Responsive Height Constrained Container */}
+      <div
+        className="relative w-full bg-black flex items-center justify-center overflow-hidden transition-all duration-300"
+        style={{
+          maxHeight: sizeMode === 'fit' ? 'min(48vh, 420px)' : 'min(78vh, 720px)',
+        }}
+      >
+        <div className="w-full h-full aspect-video flex items-center justify-center max-h-full">
+          <canvas
+            ref={canvasRef}
+            width={960}
+            height={540}
+            className="w-full h-full object-contain cursor-pointer"
+            onClick={() => setIsPlaying((prev) => !prev)}
+          />
+        </div>
 
         {/* Live Frame Performance HUD (Dev-only monitor) */}
         {showPerfMonitor && (
@@ -647,7 +675,7 @@ export const CanvasPlayer: React.FC<CanvasPlayerProps> = ({
               className="flex items-center gap-2 px-4 py-2 bg-amber-400 hover:bg-amber-300 text-zinc-950 font-bold rounded-lg transition font-mono text-xs shadow-md shadow-amber-950/30"
             >
               {isPlaying ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current" />}
-              <span>{isPlaying ? 'PAUSE' : 'PLAY'}</span>
+              <span>{isPlaying ? t.pause : t.play}</span>
             </button>
 
             <button

@@ -7,8 +7,11 @@ import {
   Sliders,
   Download,
   BookOpen,
+  HelpCircle,
+  Languages,
 } from 'lucide-react';
 import { StudioTab } from './StudioSidebar.tsx';
+import { Language, translations } from '../locales/translations.ts';
 
 interface StudioHeaderProps {
   projectTitle: string;
@@ -20,6 +23,9 @@ interface StudioHeaderProps {
   setActiveTab: (tab: StudioTab) => void;
   onOpenRenderModal: () => void;
   onOpenPresetDrawer: () => void;
+  onOpenQuickGuide: () => void;
+  lang: Language;
+  setLang: (lang: Language) => void;
 }
 
 export const StudioHeader: React.FC<StudioHeaderProps> = ({
@@ -32,9 +38,14 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
   setActiveTab,
   onOpenRenderModal,
   onOpenPresetDrawer,
+  onOpenQuickGuide,
+  lang,
+  setLang,
 }) => {
+  const t = translations[lang];
+
   return (
-    <header className="border-b border-zinc-800 bg-zinc-950 px-5 py-3 flex items-center justify-between gap-4 z-40 shrink-0">
+    <header className="border-b border-zinc-800 bg-zinc-950 px-4 sm:px-5 py-3 flex items-center justify-between gap-3 z-40 shrink-0">
       {/* Brand & Project Identity */}
       <div className="flex items-center gap-3">
         <div className="w-8 h-8 rounded bg-red-600 text-zinc-950 flex items-center justify-center font-editorial font-bold text-xl tracking-tighter shadow-sm">
@@ -43,13 +54,13 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
         <div>
           <div className="flex items-center gap-2">
             <span className="font-editorial text-base font-bold text-zinc-100 uppercase tracking-tight">
-              Studio Engine
+              {t.appName}
             </span>
             <span className="text-[10px] font-mono font-semibold px-1.5 py-0.2 rounded bg-zinc-900 text-amber-400 border border-amber-500/30">
-              PRO V0.2
+              {t.proBadge}
             </span>
           </div>
-          <p className="text-[11px] text-zinc-400 font-mono truncate max-w-sm">
+          <p className="text-[11px] text-zinc-400 font-mono truncate max-w-xs sm:max-w-sm">
             {projectTitle} ({duration}s)
           </p>
         </div>
@@ -65,7 +76,7 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
               : 'text-zinc-400 hover:text-zinc-200'
           }`}
         >
-          Canvas
+          {t.tabCanvas}
         </button>
         <button
           onClick={() => setActiveTab('script')}
@@ -75,7 +86,7 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
               : 'text-zinc-400 hover:text-zinc-200'
           }`}
         >
-          Script & Beats
+          {t.tabVoice}
         </button>
         <button
           onClick={() => setActiveTab('inspector')}
@@ -85,7 +96,7 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
               : 'text-zinc-400 hover:text-zinc-200'
           }`}
         >
-          Prompt Studio
+          {t.tabInspector}
         </button>
         <button
           onClick={() => setActiveTab('overview')}
@@ -95,26 +106,62 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
               : 'text-zinc-400 hover:text-zinc-200'
           }`}
         >
-          Brief
+          {t.tabBrief}
         </button>
       </div>
 
       {/* Right Utility Buttons */}
-      <div className="flex items-center gap-2.5">
+      <div className="flex items-center gap-2 sm:gap-2.5">
+        {/* Language Switcher Button */}
+        <div className="flex items-center bg-zinc-900 p-0.5 rounded-lg border border-zinc-800">
+          <button
+            onClick={() => setLang('vi')}
+            className={`px-2 py-1 text-xs font-mono rounded transition ${
+              lang === 'vi'
+                ? 'bg-zinc-800 text-amber-300 font-bold'
+                : 'text-zinc-400 hover:text-zinc-200'
+            }`}
+            title="Tiếng Việt"
+          >
+            🇻🇳 VI
+          </button>
+          <button
+            onClick={() => setLang('en')}
+            className={`px-2 py-1 text-xs font-mono rounded transition ${
+              lang === 'en'
+                ? 'bg-zinc-800 text-amber-300 font-bold'
+                : 'text-zinc-400 hover:text-zinc-200'
+            }`}
+            title="English"
+          >
+            🇬🇧 EN
+          </button>
+        </div>
+
+        {/* Quick Guide Button */}
+        <button
+          onClick={onOpenQuickGuide}
+          className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-lg text-xs font-mono text-zinc-300 transition"
+          title={t.tabHelp}
+        >
+          <HelpCircle className="w-3.5 h-3.5 text-amber-400" />
+          <span className="hidden sm:inline">{t.tabHelp}</span>
+        </button>
+
         {/* FFmpeg Status Badge */}
-        <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800 text-xs font-mono">
+        <div className="hidden xl:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800 text-xs font-mono">
           {ffmpegAvailable === true ? (
             <>
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-              <span className="text-emerald-300 text-[11px]">FFmpeg Ready</span>
+              <span className="text-emerald-300 text-[11px]">{t.ffmpegReady}</span>
             </>
           ) : ffmpegAvailable === false ? (
             <>
               <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
-              <span className="text-rose-300 text-[11px]">No FFmpeg</span>
+              <span className="text-rose-300 text-[11px]">{t.ffmpegMissing}</span>
             </>
           ) : (
-            <span className="text-zinc-400 text-[11px]">Checking...</span>
+            <span className="text-zinc-400 text-[11px]">{t.checking}</span>
           )}
         </div>
 
@@ -125,27 +172,27 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
           title="Open Layout and Motion Presets Drawer"
         >
           <BookOpen className="w-3.5 h-3.5 text-amber-400" />
-          <span>Presets</span>
+          <span>{t.presetsBtn}</span>
         </button>
 
         {/* Load Benchmark */}
         <button
           onClick={onLoadBenchmark}
           disabled={isLoading}
-          className="flex items-center gap-1.5 px-3 py-1 rounded bg-zinc-900 hover:bg-zinc-800 text-amber-300 text-xs font-mono transition border border-amber-500/20 active:scale-95 disabled:opacity-50"
+          className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded bg-zinc-900 hover:bg-zinc-800 text-amber-300 text-xs font-mono transition border border-amber-500/20 active:scale-95 disabled:opacity-50"
           title="Reload 1929 Wall Street benchmark"
         >
           <RefreshCw className={`w-3 h-3 ${isLoading ? 'animate-spin' : ''}`} />
-          <span className="hidden sm:inline">1929 Demo</span>
+          <span className="hidden sm:inline">{t.demoBtn}</span>
         </button>
 
         {/* Export Render Button */}
         <button
           onClick={onOpenRenderModal}
-          className="flex items-center gap-1.5 px-3.5 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded text-xs font-mono font-bold transition shadow-md shadow-red-950/40 active:scale-95"
+          className="flex items-center gap-1.5 px-3 sm:px-3.5 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded text-xs font-mono font-bold transition shadow-md shadow-red-950/40 active:scale-95"
         >
           <Download className="w-3.5 h-3.5" />
-          <span>Export 1080p</span>
+          <span>{t.exportBtn}</span>
         </button>
       </div>
     </header>

@@ -16,6 +16,12 @@ export async function getOrLoadDecodedImage(src: string): Promise<HTMLImageEleme
     return loadingPromises.get(src)!;
   }
 
+  // Use proxy for remote URLs to avoid CORS tainting of canvas during export
+  const effectiveSrc =
+    src.startsWith('http://') || src.startsWith('https://')
+      ? `/api/proxy-image?url=${encodeURIComponent(src)}`
+      : src;
+
   const p = new Promise<HTMLImageElement | null>((resolve) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
@@ -32,10 +38,25 @@ export async function getOrLoadDecodedImage(src: string): Promise<HTMLImageEleme
       resolve(img);
     };
     img.onerror = () => {
+      // If proxy failed, retry directly once
+      if (effectiveSrc !== src) {
+        const retryImg = new Image();
+        retryImg.onload = () => {
+          imageCache.set(src, retryImg);
+          loadingPromises.delete(src);
+          resolve(retryImg);
+        };
+        retryImg.onerror = () => {
+          loadingPromises.delete(src);
+          resolve(null);
+        };
+        retryImg.src = src;
+        return;
+      }
       loadingPromises.delete(src);
       resolve(null);
     };
-    img.src = src;
+    img.src = effectiveSrc;
   });
 
   loadingPromises.set(src, p);

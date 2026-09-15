@@ -13,6 +13,7 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { Project } from '../types.ts';
+import { Language, translations } from '../locales/translations.ts';
 
 interface ProjectOverviewViewProps {
   project: Project;
@@ -23,9 +24,18 @@ interface ProjectOverviewViewProps {
   onGenerateStoryboard: () => void;
   isGenerating: boolean;
   onJumpToCanvas: () => void;
+  lang?: Language;
 }
 
-const TOPIC_SUGGESTIONS = [
+const TOPIC_SUGGESTIONS_VI = [
+  'Ngày Thị Trường Phố Wall Sụp Đổ (1929)',
+  'Apollo 11: Báo động máy tính 1202',
+  'Bức Tường Berlin Sụp Đổ (1989)',
+  'Dự Án Manhattan: Thử Nghiệm Trinity (1945)',
+  'Thảm Kịch Tàu Titanic (1912)',
+];
+
+const TOPIC_SUGGESTIONS_EN = [
   'The Day Wall Street Crashed (1929)',
   'Apollo 11: The 1202 Computer Alarm',
   'The Fall of the Berlin Wall (1989)',
@@ -42,7 +52,10 @@ export const ProjectOverviewView: React.FC<ProjectOverviewViewProps> = ({
   onGenerateStoryboard,
   isGenerating,
   onJumpToCanvas,
+  lang = 'vi',
 }) => {
+  const t = translations[lang];
+  const suggestions = lang === 'vi' ? TOPIC_SUGGESTIONS_VI : TOPIC_SUGGESTIONS_EN;
   return (
     <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-6 max-w-5xl mx-auto w-full">
       {/* Header */}
@@ -94,8 +107,10 @@ export const ProjectOverviewView: React.FC<ProjectOverviewViewProps> = ({
 
         {/* Quick Presets */}
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[11px] font-mono text-zinc-500">Fast Presets:</span>
-          {TOPIC_SUGGESTIONS.map((preset) => (
+          <span className="text-[11px] font-mono text-zinc-500">
+            {lang === 'vi' ? 'Chủ đề mẫu nhanh:' : 'Fast Presets:'}
+          </span>
+          {suggestions.map((preset) => (
             <button
               key={preset}
               onClick={() => setTopic(preset)}

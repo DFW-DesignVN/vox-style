@@ -12,7 +12,7 @@ import {
   Cloud,
 } from 'lucide-react';
 
-export type TTSProviderChoice = 'auto' | 'vieneu' | 'capcut' | 'elevenlabs';
+export type TTSProviderChoice = 'google' | 'auto' | 'vieneu' | 'capcut' | 'elevenlabs';
 
 interface TopicDirectorProps {
   topic: string;
@@ -211,9 +211,10 @@ export const TopicDirector: React.FC<TopicDirectorProps> = ({
             <div className="flex items-center gap-1 bg-zinc-900 p-1 rounded-md border border-zinc-800 text-[11px] font-mono">
               {(
                 [
+                  { id: 'google', label: 'Google (Stable)', icon: Cloud },
                   { id: 'auto', label: 'AUTO', icon: Cpu },
-                  { id: 'vieneu', label: 'VieNeu (Local)', icon: Server },
-                  { id: 'capcut', label: 'CapCut (Free)', icon: Server },
+                  { id: 'vieneu', label: 'VieNeu', icon: Server },
+                  { id: 'capcut', label: 'CapCut', icon: Server },
                   { id: 'elevenlabs', label: 'ElevenLabs', icon: Cloud },
                 ] as const
               ).map((p) => {
