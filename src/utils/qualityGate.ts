@@ -1,5 +1,6 @@
 import { Project, QualityGateResult } from '../types.ts';
 import { validateScript } from './scriptEngine.ts';
+import { validateComposition } from '../visualDirector/PhysicalCollage.ts';
 
 const SAFE_MIN = 6;
 const SAFE_MAX = 94;
@@ -29,8 +30,10 @@ export function runQualityGate(project: Project, ffmpegAvailable: boolean): Qual
   const shots=[...project.shots].sort((a,b)=>a.start-b.start);
   const allShotsHaveAssets=shots.length>0&&shots.every(s=>Array.isArray(s.assets)&&s.assets.length>0);
   if(!allShotsHaveAssets)messages.push('Mỗi phân cảnh cần có ít nhất một hình ảnh tư liệu.');
+  const compositionIssues=shots.flatMap(s=>validateComposition(s));
+  if(compositionIssues.length)messages.push(`Composition QA: ${compositionIssues.slice(0,4).join(' · ')}`);
   const unresolvedAssets=shots.flatMap(s=>(s.assets||[]).filter(a=>a.type==='image'&&(a.status==='failed'||(!a.source&&a.status!=='ready'))).map(a=>`${s.shot_id}/${a.id}`));
-  const assetsResolved=unresolvedAssets.length===0&&allShotsHaveAssets;
+  const assetsResolved=unresolvedAssets.length===0&&allShotsHaveAssets&&compositionIssues.length===0;
   if(unresolvedAssets.length)messages.push(`Một số hình ảnh tư liệu chưa sẵn sàng: ${unresolvedAssets.slice(0,4).join(', ')}${unresolvedAssets.length>4?'…':''}`);
   const textWithinSafeArea=shots.every(s=>(s.text||[]).every(t=>t.position.x>=SAFE_MIN&&t.position.x<=SAFE_MAX&&t.position.y>=SAFE_MIN&&t.position.y<=SAFE_MAX));
   if(!textWithinSafeArea)messages.push('Một số tiêu đề đang nằm sát mép màn hình ngoài vùng an toàn (safe area).');
